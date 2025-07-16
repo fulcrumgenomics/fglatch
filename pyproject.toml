@@ -1,12 +1,12 @@
 [project]
 name            = "fglatch"
 version         = "0.1.0"
-description     = "CLI and Python extensions for Latch."
+description     = "CLI and Python extensions for the LatchBio platform."
 readme          = "README.md"
 authors         = [{ name="Fulcrum Genomics LLC", email="contact@fulcrumgenomics.com" }]
 license         = "MIT"
 include         = ["LICENSE"]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies    = [
     "defopt>=6.4.0"
 ]
@@ -18,11 +18,11 @@ classifiers     = [
     "Natural Language :: English",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Typing :: Typed",
 ]
+
 
 [project.urls]
 "homepage" = "https://github.com/fulcrumgenomics/fglatch"
@@ -32,31 +32,22 @@ classifiers     = [
 [project.scripts]
 fglatch = "fglatch.main:run"
 
-[tool.poetry]
-requires-poetry = ">=2.1"
-
-[tool.poetry.requires-plugins]
-poethepoet = ">=0.29"
-
-[tool.poetry.group.dev.dependencies]
-mypy        = "^1.13.0"
-pytest      = "^8.3.3"
-pytest-cov  = "^5.0.0"
-ruff        = "0.7.4"
-
-[tool.poetry.group.ipython]
-optional = true
-
-[tool.poetry.group.ipython.dependencies]
-ipython = "^8.24.0"
-ipdb    = "^0.13.13"
-
 [build-system]
-requires      = ["poetry-core>=2.1"]
-build-backend = "poetry.core.masonry.api"
+requires      = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.poe]
-poetry_command = "task"
+[dependency-groups]
+dev = [
+    "ruff ==0.12.3",
+    "mypy ==1.17.0",
+    "pytest ~=8.4",
+    "pytest-cov ~=6.2",
+    "pytest-mock ~=3.14",
+    "poethepoet ~=0.36",
+]
+ipython = [
+    "ipython ~=9.4",
+]
 
 [tool.poe.tasks]
 fix-format = "ruff format"
@@ -68,7 +59,7 @@ fix-all.sequence    = [
     "fix-lint"
 ]
 
-check-lock   = "poetry check --lock"
+check-lock   = "uv lock --check"
 check-format = "ruff format --check --diff"
 check-lint   = "ruff check"
 check-tests  = "pytest"
@@ -131,7 +122,7 @@ addopts    = [
 
 [tool.ruff]
 line-length    = 100
-target-version = "py311"
+target-version = "py312"
 output-format  = "full"
 preview        = true
 

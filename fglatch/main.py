@@ -5,9 +5,7 @@ from typing import List
 
 import defopt
 
-from fglatch.tools.hello import hello
-
-_tools: List[Callable] = [hello]
+_tools: List[Callable] = []
 
 
 def setup_logging(level: str = "INFO") -> None:
