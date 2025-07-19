@@ -2,6 +2,11 @@
 
 from typing import TypeAlias
 
+from pydantic import JsonValue
+
+JsonDict: TypeAlias = dict[str, JsonValue]
+"""A JSON dictionary."""
+
 LatchWorkspaceId: TypeAlias = str
 """A Latch workspace ID, e.g. "1234"."""
 

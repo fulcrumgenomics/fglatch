@@ -1,4 +1,5 @@
 import warnings
+from pathlib import Path
 from typing import Final
 
 import pytest
@@ -59,3 +60,9 @@ def check_latch_api_connection(request: pytest.FixtureRequest) -> None:
 
     if marker is not None and NO_LATCH_API_CONNECTION:
         pytest.xfail("Test requires Latch API connection to the Fulcrum Genomics workspace.")
+
+
+@pytest.fixture(scope="session")
+def datadir() -> Path:
+    """Path to the test data directory."""
+    return Path(__file__).parent / "data"
