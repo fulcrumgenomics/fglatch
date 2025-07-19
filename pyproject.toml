@@ -123,6 +123,10 @@ module = "latch.*"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+module = "latch_cli.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 module = "latch_sdk_config.*"
 ignore_missing_imports = true
 
