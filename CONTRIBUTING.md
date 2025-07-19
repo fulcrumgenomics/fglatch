@@ -74,3 +74,37 @@ uv run poe fix-all
 ```console
 uv run poe fix-and-check-all
 ```
+
+## Online Unit Tests
+
+This project includes unit tests which require authenticated access to the Fulcrum Genomics Latch workspace.
+
+These tests are configured with the appropriate authentication in the GitHub Actions "Code Checks" workflow.
+
+If you would like to be able to run these tests locally, request access to the Fulcrum Genomics Latch workspace from Nils Homer. 
+Then, before running the unit test suite, ensure you are logged in to Latch and the Fulcrum Genomics workspace is active.
+
+First, log in via `latch login`.
+This will open a browser pop-up with a login prompt.
+Log in with Google SSO.
+
+```console
+$ uv run latch login
+```
+
+Then, activate the Fulcrum workspace with `latch workspace`.
+
+```console
+$ uv run latch workspace
+Select Workspace
+
+    User's Default Workspace
+    Client1
+  > Fulcrum Genomics (currently selected)
+    Client2
+    Client3
+
+[ARROW-KEYS] Navigate	[ENTER] Select	[Q] Quit
+```
+
+
