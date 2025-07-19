@@ -12,6 +12,7 @@ dependencies    = [
     "latch~=2.65",
     "requests~=2.31",
     "requests-ratelimiter~=0.7",
+    "xattr~=1.1",
 ]
 classifiers     = [
     "Development Status :: 3 - Alpha",
@@ -120,6 +121,10 @@ ignore_missing_imports = true
 module = "latch.*"
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "latch_sdk_config.*"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 minversion = "7.4"
 addopts    = [
@@ -129,6 +134,14 @@ addopts    = [
 ]
 markers = [
     "requires_latch_api: mark test as requiring Latch API connection"
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:flyteidl.admin.*",
+    "ignore::DeprecationWarning:flyteidl.core.*",
+    "ignore::DeprecationWarning:flytekit.core.*",
+    "ignore::DeprecationWarning:google.protobuf.*",
+    "ignore::DeprecationWarning:pkg_resources.*",
+    "ignore::UserWarning:marshmallow_jsonschema.*",
 ]
 
 [tool.ruff]
