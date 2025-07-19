@@ -127,6 +127,9 @@ addopts    = [
     "--import-mode=importlib",
     "--cov"
 ]
+markers = [
+    "requires_latch_api: mark test as requiring Latch API connection"
+]
 
 [tool.ruff]
 line-length    = 100
