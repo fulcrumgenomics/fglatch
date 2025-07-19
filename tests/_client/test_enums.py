@@ -2,7 +2,7 @@ from typing import assert_never
 
 import pytest
 
-from fglatch.client.enums import ExecutionStatus
+from fglatch._client.enums import ExecutionStatus
 
 
 @pytest.mark.parametrize("status", ExecutionStatus)

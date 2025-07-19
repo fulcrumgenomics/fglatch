@@ -1,15 +1,18 @@
 """A class for making rate-limited requests to the Latch API."""
 
 from typing import Literal
+from typing import cast
 
 from latch.utils import current_workspace
 from latch.utils import retrieve_or_login
+from latch_sdk_config.latch import config
 from requests import Session
 from requests_ratelimiter import Duration
 from requests_ratelimiter import Limiter
 from requests_ratelimiter import LimiterSession
 from requests_ratelimiter import RequestRate
 
+from fglatch._client.models import ListedExecutions
 from fglatch._shared.type_aliases import LatchWorkspaceId
 
 LATCH_API_RATE: RequestRate = RequestRate(limit=10, interval=Duration.SECOND * 1)
@@ -59,3 +62,35 @@ class LatchClient:
 
         self._auth_header = {"Authorization": f"Bearer {token}"}
         self._session = LimiterSession(limiter=Limiter(LATCH_API_RATE))
+
+    def get_executions(self) -> ListedExecutions:
+        """
+        Retrieve execution metadata from Latch's `get-executions` endpoint.
+
+        The body of this function is adapted from
+        `latch_cli.services.get_executions.get_executions()`, and adds pydantic model validation.
+
+        Returns:
+            Metadata for all executions in the specified workspace. The results are returned as a
+            mapping of workspace IDs (as strings) to blobs of execution metadata.
+
+        Raises:
+            HTTPError: If the POST request to the `get-executions` endpoint failed.
+            ValidationError: If the POST request's response was malformatted.
+        """
+        # The `cast()` is required because Mypy does not currently infer that a string literal is a
+        # string when the literal is a key in a mapping.
+        # https://github.com/python/mypy/issues/18494
+        headers: dict[str, str] = cast(dict[str, str], self._auth_header)
+
+        resp = self._session.post(
+            url=config.api.execution.list,
+            headers=headers,
+            json={"ws_account_id": self._workspace_id},
+        )
+
+        resp.raise_for_status()
+
+        executions = ListedExecutions.model_validate(resp.json())
+
+        return executions
