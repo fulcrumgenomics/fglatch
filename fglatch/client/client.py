@@ -49,10 +49,6 @@ class LatchClient:
             workspace_id: A Latch workspace ID. If not provided, the active workspace will be
                 retrieved from `~/.latch/workspace`. If there is no currently active workspace, the
                 default workspace ID will be retrieved from the user's account.
-
-        Raises:
-            ValueError: If the tenant prefix contains non-alphanumeric characters or if the API key
-                environment variable is not set.
         """
         if token is None:
             token = retrieve_or_login()
