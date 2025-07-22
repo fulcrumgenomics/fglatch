@@ -8,11 +8,10 @@ license         = "MIT"
 include         = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies    = [
-    "defopt>=6.4.0",
-    "latch>=2.65.2",
-    "requests>=2.32.4",
-    "requests-ratelimiter>=0.7.0",
-    "types-requests>=2.31.0.6",
+    "defopt~=6.4",
+    "latch~=2.65",
+    "requests~=2.31",
+    "requests-ratelimiter~=0.7",
 ]
 classifiers     = [
     "Development Status :: 3 - Alpha",
@@ -48,6 +47,7 @@ dev = [
     "pytest-cov ~=6.2",
     "pytest-mock ~=3.14",
     "poethepoet ~=0.36",
+    "types-requests~=2.31",
 ]
 ipython = [
     "ipython ~=9.4",

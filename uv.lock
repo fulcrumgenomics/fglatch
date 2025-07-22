@@ -438,17 +438,14 @@ wheels = [
 
 [[package]]
 name = "defopt"
-version = "7.0.0"
+version = "6.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama", marker = "sys_platform == 'win32'" },
     { name = "docutils" },
     { name = "sphinxcontrib-napoleon" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3a/53/89e5eaa8e775cef5b66254365f51c389ca167b0fa96713b722824708b720/defopt-7.0.0.tar.gz", hash = "sha256:d7ac98810005880717e1df62527fd35dfe083f551b6d4fb5da0b25f608e8ef4c", size = 44527 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ec/be/03e94203daf8653bb402936820ac762064b4ef6079daab47581506c187c7/defopt-7.0.0-py3-none-any.whl", hash = "sha256:88b6747561d803e3fc020b9080fd0aa6a300927f64167c76d95544495f1a8307", size = 17795 },
-]
+sdist = { url = "https://files.pythonhosted.org/packages/cc/3f/3baf4e6fed12dac76c0ccb4716fd4235ef0aa5b48f66aab6f970afc7b44e/defopt-6.4.0.tar.gz", hash = "sha256:359a56137b4b7dcbc051d2157e6591a09c35c4297cfc00f1ef8dbcd192d19a34", size = 42257 }
 
 [[package]]
 name = "deprecated"
@@ -551,7 +548,6 @@ dependencies = [
     { name = "latch" },
     { name = "requests" },
     { name = "requests-ratelimiter" },
-    { name = "types-requests" },
 ]
 
 [package.dev-dependencies]
@@ -562,6 +558,7 @@ dev = [
     { name = "pytest-cov" },
     { name = "pytest-mock" },
     { name = "ruff" },
+    { name = "types-requests" },
 ]
 ipython = [
     { name = "ipython" },
@@ -569,11 +566,10 @@ ipython = [
 
 [package.metadata]
 requires-dist = [
-    { name = "defopt", specifier = ">=6.4.0" },
-    { name = "latch", specifier = ">=2.65.2" },
-    { name = "requests", specifier = ">=2.32.4" },
-    { name = "requests-ratelimiter", specifier = ">=0.7.0" },
-    { name = "types-requests", specifier = ">=2.31.0.6" },
+    { name = "defopt", specifier = "~=6.4" },
+    { name = "latch", specifier = "~=2.65" },
+    { name = "requests", specifier = "~=2.31" },
+    { name = "requests-ratelimiter", specifier = "~=0.7" },
 ]
 
 [package.metadata.requires-dev]
@@ -584,6 +580,7 @@ dev = [
     { name = "pytest-cov", specifier = "~=6.2" },
     { name = "pytest-mock", specifier = "~=3.14" },
     { name = "ruff", specifier = "==0.12.3" },
+    { name = "types-requests", specifier = "~=2.31" },
 ]
 ipython = [{ name = "ipython", specifier = "~=9.4" }]
 
