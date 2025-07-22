@@ -38,6 +38,9 @@ def submit(
             terminate. If the workflow does not terminate in the allotted time, raise an error. If
             this flag is not specified, this program will exit once the workflow execution has been
             submitted.
+
+    Raises:
+        ValueError: if neither or both of `--launch-plan` and `--parameter-json` are specified.
     """
     if (launch_plan is None) == (parameter_json is None):
         raise ValueError(
