@@ -14,6 +14,7 @@ from requests_ratelimiter import RequestRate
 
 from fglatch._client.models import Execution
 from fglatch._client.models import ListedExecutions
+from fglatch._shared.type_aliases import ExecutionIdAsString
 from fglatch._shared.type_aliases import LatchWorkspaceId
 
 LATCH_API_RATE: RequestRate = RequestRate(limit=10, interval=Duration.SECOND * 1)
@@ -64,7 +65,7 @@ class LatchClient:
         self._auth_header = {"Authorization": f"Bearer {token}"}
         self._session = LimiterSession(limiter=Limiter(LATCH_API_RATE))
 
-    def get_executions(self) -> dict[str, Execution]:
+    def get_executions(self) -> dict[ExecutionIdAsString, Execution]:
         """
         Retrieve execution metadata from Latch's `get-executions` endpoint.
 
