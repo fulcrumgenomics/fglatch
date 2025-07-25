@@ -3,14 +3,13 @@ import pytest
 from fglatch._client.enums import ExecutionStatus
 from fglatch._client.latch_client import LatchClient
 from fglatch._client.models import Execution
-from fglatch._client.models import ListedExecutions
 
 
 @pytest.mark.requires_latch_api
 def test_get_executions_online() -> None:
     """Test that we can retrieve executions from the Latch API."""
     client: LatchClient = LatchClient()
-    executions: ListedExecutions = client.get_executions()
+    executions: dict[str, Execution] = client.get_executions()
 
     # `get_executions()` will always return _all_ of the executions in a workspace, so we can't test
     # the total number of executions, which will vary.

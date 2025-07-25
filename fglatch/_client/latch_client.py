@@ -12,6 +12,7 @@ from requests_ratelimiter import Limiter
 from requests_ratelimiter import LimiterSession
 from requests_ratelimiter import RequestRate
 
+from fglatch._client.models import Execution
 from fglatch._client.models import ListedExecutions
 from fglatch._shared.type_aliases import LatchWorkspaceId
 
@@ -63,7 +64,7 @@ class LatchClient:
         self._auth_header = {"Authorization": f"Bearer {token}"}
         self._session = LimiterSession(limiter=Limiter(LATCH_API_RATE))
 
-    def get_executions(self) -> ListedExecutions:
+    def get_executions(self) -> dict[str, Execution]:
         """
         Retrieve execution metadata from Latch's `get-executions` endpoint.
 
@@ -93,4 +94,4 @@ class LatchClient:
 
         executions = ListedExecutions.model_validate(resp.json())
 
-        return executions
+        return executions.root
