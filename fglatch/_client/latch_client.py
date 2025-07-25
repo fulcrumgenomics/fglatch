@@ -10,8 +10,7 @@ from requests_ratelimiter import Limiter
 from requests_ratelimiter import LimiterSession
 from requests_ratelimiter import RequestRate
 
-from fglatch.lib.type_aliases import LatchUserApiToken
-from fglatch.lib.type_aliases import LatchWorkspaceId
+from fglatch._shared.type_aliases import LatchWorkspaceId
 
 LATCH_API_RATE: RequestRate = RequestRate(limit=10, interval=Duration.SECOND * 1)
 """
@@ -32,8 +31,8 @@ class LatchClient:
 
     def __init__(
         self,
-        token: LatchUserApiToken | None = None,
-        workspace_id: LatchWorkspaceId | None = None,
+        token: str | None = None,
+        workspace_id: str | None = None,
     ) -> None:
         """
         Initialize the client.
