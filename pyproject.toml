@@ -10,6 +10,7 @@ requires-python = ">=3.12"
 dependencies    = [
     "defopt~=6.4",
     "latch~=2.65",
+    "pydantic~=2.11",
     "requests~=2.31",
     "requests-ratelimiter~=0.7",
     "xattr~=1.1",
