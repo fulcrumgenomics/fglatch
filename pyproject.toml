@@ -8,7 +8,10 @@ license         = "MIT"
 include         = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies    = [
-    "defopt>=6.4.0"
+    "defopt~=6.4",
+    "latch~=2.65",
+    "requests~=2.31",
+    "requests-ratelimiter~=0.7",
 ]
 classifiers     = [
     "Development Status :: 3 - Alpha",
@@ -44,6 +47,7 @@ dev = [
     "pytest-cov ~=6.2",
     "pytest-mock ~=3.14",
     "poethepoet ~=0.36",
+    "types-requests~=2.31",
 ]
 ipython = [
     "ipython ~=9.4",
@@ -110,6 +114,10 @@ exclude                     = [
 
 [[tool.mypy.overrides]]
 module = "defopt"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "latch.*"
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
