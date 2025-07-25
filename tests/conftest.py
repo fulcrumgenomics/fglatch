@@ -58,4 +58,4 @@ def check_latch_api_connection(request: pytest.FixtureRequest) -> None:
     marker = request.node.get_closest_marker("requires_latch_api")
 
     if marker is not None and NO_LATCH_API_CONNECTION:
-        pytest.xfail("Test requires Latch API connection.")
+        pytest.xfail("Test requires Latch API connection to the Fulcrum Genomics workspace.")
