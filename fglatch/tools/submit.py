@@ -34,10 +34,6 @@ def submit(
             This is mutually exclusive with `parameter_json`.
         parameter_json: A path to a JSON containing custom parameter mappings for the execution.
             This is mutually exclusive with `launch_plan`.
-        wait_for_termination: Wait the specified number of **minutes** for the workflow to
-            terminate. If the workflow does not terminate in the allotted time, raise an error. If
-            this flag is not specified, this program will exit once the workflow execution has been
-            submitted.
 
     Raises:
         ValueError: if neither or both of `--launch-plan` and `--parameter-json` are specified.
