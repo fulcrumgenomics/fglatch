@@ -1,0 +1,19 @@
+name: Publish fglatch
+
+on:
+  push:
+    tags: '\d+.\d+.\d+'
+
+jobs:
+  code-checks:
+    name: Code checks
+    uses: "./.github/workflows/python_package.yml"
+
+  build-and-publish:
+    name: Build and publish to PyPI
+    needs: code-checks
+    uses: "./.github/workflows/build_and_publish.yml"
+    environment: pypi
+    permissions:
+      id-token: write
+
