@@ -24,6 +24,6 @@ jobs:
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: {{cookiecutter.project_slug}}-wheel
-          path: /tmp/wheelhouse/{{cookiecutter.project_slug}}*.whl
+          name: fglatch-wheel
+          path: /tmp/wheelhouse/fglatch*.whl
           if-no-files-found: error
