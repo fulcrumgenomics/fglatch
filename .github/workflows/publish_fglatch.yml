@@ -6,7 +6,7 @@ on:
       - '[0-9]+.[0-9]+.[0-9]+'
 
 env:
-  UV_VERSION: 0.7.21
+  UV_VERSION: 0.8.3
 
 jobs:
   on-main-branch-check:
