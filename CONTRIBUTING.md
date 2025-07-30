@@ -107,4 +107,46 @@ Select Workspace
 [ARROW-KEYS] Navigate	[ENTER] Select	[Q] Quit
 ```
 
+## Creating a Release on PyPI
+
+> [!NOTE]
+> This project follows [Semantic Versioning](https://semver.org/).
+> In brief:
+> 
+> - `MAJOR` version when you make incompatible API changes
+> - `MINOR` version when you add functionality in a backwards compatible manner
+> - `PATCH` version when you make backwards compatible bug fixes
+
+1. Decide on the new version number to be released.
+   - Go to the [latest release](https://github.com/fulcrumgenomics/fgpyo/releases/latest) and see what's been committed since then!
+   - Pick the appropriate new SemVer version number.
+2. Clone the repository and ensure you are on the `main` branch.
+3. Checkout a new branch to prepare the library for release, e.g.:
+    ```console
+    git checkout -b ms_release-0.2.0 
+    ```
+4. Bump the version of the library to the desired SemVer, e.g.:
+    ```console
+    uv version --bump minor
+    ```
+5. Commit the updated version with a release-scoped `chore` message, e.g.:
+   ```console
+   git commit -m "chore(release): bump to 0.2.0"
+   ```
+9. Push the commit to the upstream remote, open a PR, ensure tests pass, and seek reviews.
+    - **IMPORTANT:** When opening the PR, also prefix the PR title with `chore(release):` to ensure the merged commit has an appropriate message. (This should happen automatically if the PR includes only one commit.)
+10. Squash merge the PR.
+11. Tag the new commit on the main branch of the origin repository with the new SemVer version number.
+
+GitHub Actions will take care of the remainder of the deployment and release process:
+
+1. Unit tests will be run again for safety's sake.
+2. A source distribution will be built.
+3. Multi-arch multi-Python binary distributions will be built.
+4. Assets will be deployed to PyPI with the new SemVer.
+5. A [Conventional Commit](https://www.conventionalcommits.org/en/v1.0.0/)-aware changelog will be drafted.
+6. A GitHub release will be created with the new SemVer and the drafted changelog.
+
+> [!WARNING]
+> Consider editing the changelog if there are any errors or necessary enhancements.
 
