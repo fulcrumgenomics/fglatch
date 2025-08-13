@@ -8,9 +8,9 @@ from latch_cli.services.launch import launch_v2
 from pytest import LogCaptureFixture
 from pytest_mock import MockerFixture
 
-from fglatch._shared.type_aliases import JsonDict
 from fglatch.tools.submit import _latchify_params
 from fglatch.tools.submit import submit
+from fglatch.type_aliases._type_aliases import JsonDict
 
 FULCRUM_LATCH_HELLO_WORLD_WF_NAME: Final[str] = "wf.__init__.hello_world"
 FULCRUM_LATCH_HELLO_WORLD_WF_VERSION: Final[str] = "0.1.0-dev-9cd9c9-ec88e2"

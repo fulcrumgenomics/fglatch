@@ -14,8 +14,8 @@ from requests_ratelimiter import RequestRate
 
 from fglatch._client.models import Execution
 from fglatch._client.models import ListedExecutions
-from fglatch._shared.type_aliases import ExecutionIdAsString
-from fglatch._shared.type_aliases import LatchWorkspaceId
+from fglatch.type_aliases import ExecutionIdAsString
+from fglatch.type_aliases import LatchWorkspaceId
 
 LATCH_API_RATE: RequestRate = RequestRate(limit=10, interval=Duration.SECOND * 1)
 """
