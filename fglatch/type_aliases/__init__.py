@@ -10,13 +10,12 @@ from fglatch.type_aliases._type_aliases import WorkflowVersion
 
 __all__ = [
     "ExecutionIdAsString",
-    "LatchWorkspaceId",
     "ExecutionDisplayName",
     "ExecutionId",
-    "ExecutionIdAsString",
-    "LatchTimestamp",
     "S3Uri",
+    "LatchTimestamp",
     "WorkflowId",
     "WorkflowName",
     "WorkflowVersion",
+    "LatchWorkspaceId",
 ]
