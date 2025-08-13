@@ -6,7 +6,7 @@ from latch.ldata.path import LPath
 from latch_cli.services.launch import launch_v2
 from pydantic import JsonValue
 
-from fglatch._shared.type_aliases import JsonDict
+from fglatch.type_aliases._type_aliases import JsonDict
 
 logger = logging.getLogger(__name__)
 

@@ -3,14 +3,14 @@ from pydantic import Field
 from pydantic import RootModel
 
 from fglatch._client.enums import ExecutionStatus
-from fglatch._shared.type_aliases import ExecutionDisplayName
-from fglatch._shared.type_aliases import ExecutionId
-from fglatch._shared.type_aliases import ExecutionIdAsString
-from fglatch._shared.type_aliases import LatchTimestamp
-from fglatch._shared.type_aliases import S3Uri
-from fglatch._shared.type_aliases import WorkflowId
-from fglatch._shared.type_aliases import WorkflowName
-from fglatch._shared.type_aliases import WorkflowVersion
+from fglatch.type_aliases import ExecutionDisplayName
+from fglatch.type_aliases import ExecutionId
+from fglatch.type_aliases import ExecutionIdAsString
+from fglatch.type_aliases import LatchTimestamp
+from fglatch.type_aliases import S3Uri
+from fglatch.type_aliases import WorkflowId
+from fglatch.type_aliases import WorkflowName
+from fglatch.type_aliases import WorkflowVersion
 
 
 class Execution(BaseModel):
