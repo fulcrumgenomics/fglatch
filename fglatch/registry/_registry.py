@@ -27,20 +27,26 @@ class CatalogSamplesQueryResponse(BaseModel):
     catalog_samples: CatalogSamples = Field(alias="catalogSamples")
 
 
-def query_latch_records_by_name(record_names: str | list[str]) -> dict[RecordName, Record]:
+def query_latch_records_by_name(
+    record_names: str | list[str],
+    table_id: str | None = None,
+) -> dict[RecordName, Record]:
     """
     Fetch a set of Latch Registry records by their names.
 
-    NOTE: the query is performed across *all* tables in the Registry.
+    By default, the query is performed across *all* tables in the Registry. If a table ID is
+    provided, only records from the specified table will be included in the response.
 
     Args:
         record_names: A list of record names in the Latch Registry.
+        table_id: An optional table ID. If provided, only records from this table will be included
+            in the returned dictionary.
 
     Raises:
         ValidationError: If the GQL response can't be validated.
         ValueError: If no record is found for a requested name.
         ValueError: If multiple records are found with the same name. (This may happen if there are
-            name collisions _across_ Registry tables.)
+            name collisions _across_ Registry tables. Set a `table_id` to avoid this.)
     """
     if isinstance(record_names, str):
         record_names = [record_names]
@@ -61,6 +67,9 @@ def query_latch_records_by_name(record_names: str | list[str]) -> dict[RecordNam
 
     response = CatalogSamplesQueryResponse.model_validate(data)
     records = [Record(str(k.id)) for k in response.catalog_samples.nodes]
+
+    if table_id is not None:
+        records = [r for r in records if r.get_table_id() == table_id]
 
     name_counts: Counter[RecordName] = Counter(record.get_name() for record in records)
 

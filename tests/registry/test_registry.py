@@ -5,6 +5,7 @@ from latch.registry.record import Record
 from pydantic import ValidationError
 from pytest_mock import MockerFixture
 
+from fglatch._constants import MOCK_TABLE_1_ID
 from fglatch.registry import query_latch_records_by_name
 from fglatch.type_aliases import RecordName
 
@@ -39,16 +40,39 @@ def test_query_latch_records_by_name_online_multiple_records() -> None:
 
 
 @pytest.mark.requires_latch_registry
-def test_query_latch_records_by_name_online_multiple_records_with_duplicate_name() -> None:
+def test_query_latch_records_by_name_online_gets_record_from_specified_table() -> None:
     """query_latch_records_by_name() should fetch real data."""
     # There should be one record in `fglatch-tests / mock-table-1` and one record in
     # `fglatch-tests / mock-table-2`
-    name: str = "bad_record_1"
+    name: str = "duplicate_record_1"
 
+    records = query_latch_records_by_name(name, table_id=MOCK_TABLE_1_ID)
+
+    assert name in records
+    assert records[name].get_values().get("foo") == "salutations"
+    assert records[name].get_values().get("bar") == 7
+
+
+@pytest.mark.requires_latch_registry
+def test_query_latch_records_by_name_online_raises_if_records_with_duplicate_name() -> None:
+    """query_latch_records_by_name() should fetch real data."""
+    # There should be one record in `fglatch-tests / mock-table-1` and one record in
+    # `fglatch-tests / mock-table-2`
+    name: str = "duplicate_record_1"
     with pytest.raises(ValueError) as excinfo:
         query_latch_records_by_name(name)
 
     assert f"Duplicate record name: {name}" in str(excinfo.value)
+
+
+@pytest.mark.requires_latch_registry
+def test_query_latch_records_by_name_online_raises_if_no_record_with_specified_name() -> None:
+    """query_latch_records_by_name() should fetch real data."""
+    name: str = "nonexistent"
+    with pytest.raises(ValueError) as excinfo:
+        query_latch_records_by_name(name, table_id=MOCK_TABLE_1_ID)
+
+    assert f"No record found with name: {name}" in str(excinfo.value)
 
 
 @pytest.fixture
