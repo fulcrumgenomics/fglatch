@@ -66,7 +66,7 @@ def query_latch_records_by_name(
     )
 
     response = CatalogSamplesQueryResponse.model_validate(data)
-    records = [Record(str(k.id)) for k in response.catalog_samples.nodes]
+    records: list[Record] = [Record(str(k.id)) for k in response.catalog_samples.nodes]
 
     if table_id is not None:
         records = [r for r in records if r.get_table_id() == table_id]
@@ -84,6 +84,6 @@ def query_latch_records_by_name(
     if errs:
         raise ValueError("Could not find unique records for queried names" + "\n".join(errs))
 
-    record_map = {record.get_name(): record for record in records}
+    record_map: dict[RecordName, Record] = {record.get_name(): record for record in records}
 
     return record_map
