@@ -48,11 +48,12 @@ class ExecutionCreatorByTokenQueryResponse(BaseModel):
 
 def get_execution_name() -> str:
     """
-    Retrieve the current execution's name.
+    Retrieve the current execution's name, as it appears in the Latch console.
 
-    Active Latch executions include a set environment variable, `FLYTE_INTERNAL_EXECUTION_ID`, which
-    is a key into Latch's GQL store. The execution's name, as it appears in the console, can be
-    retrieved by querying GQL with this ID.
+    This function should only be used in the context of an active Latch execution. Active Latch
+    executions include a set environment variable, `FLYTE_INTERNAL_EXECUTION_ID`, which is a key
+    into Latch's GQL store. The execution's name, as it appears in the console, can be retrieved by
+    querying GQL with this ID.
 
     Returns:
         The execution name.
@@ -95,10 +96,11 @@ def get_execution_name() -> str:
 
 def get_workflow_version() -> str:
     """
-    Retrieve the workflow version.
+    Retrieve the workflow version of the current Latch execution.
 
-    Active Latch executions include a set environment variable, `FLYTE_INTERNAL_TASK_VERSION`, which
-    contains the current workflow version.
+    This function should only be used in the context of an active Latch execution. Active Latch
+    executions include a set environment variable, `FLYTE_INTERNAL_TASK_VERSION`, which contains the
+    current workflow version.
 
     Returns:
         The workflow version.
