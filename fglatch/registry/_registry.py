@@ -29,7 +29,7 @@ class CatalogSamplesQueryResponse(BaseModel):
 
 def query_latch_records_by_name(
     record_names: str | list[str],
-    table_id: str | None = None,
+    table_id: str,
 ) -> dict[RecordName, Record]:
     """
     Fetch a set of Latch Registry records by their names.
@@ -45,8 +45,10 @@ def query_latch_records_by_name(
     Raises:
         ValidationError: If the GQL response can't be validated.
         ValueError: If no record is found for a requested name.
-        ValueError: If multiple records are found with the same name. (This may happen if there are
-            name collisions _across_ Registry tables. Set a `table_id` to avoid this.)
+        ValueError: If multiple records are found with the same name. (Names should be unique within
+            a table, so this should only happen if there are name collisions _across_ Registry
+            tables. Requiring a `table_id` is intended to avoid this, and this error is not
+            expected to be raised in practice.)
     """
     if isinstance(record_names, str):
         record_names = [record_names]
@@ -68,8 +70,8 @@ def query_latch_records_by_name(
     response = CatalogSamplesQueryResponse.model_validate(data)
     records: list[Record] = [Record(str(k.id)) for k in response.catalog_samples.nodes]
 
-    if table_id is not None:
-        records = [r for r in records if r.get_table_id() == table_id]
+    # Filter to records from the specified table.
+    records = [r for r in records if r.get_table_id() == table_id]
 
     name_counts: Counter[RecordName] = Counter(record.get_name() for record in records)
 

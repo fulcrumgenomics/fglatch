@@ -14,7 +14,7 @@ from fglatch.type_aliases import RecordName
 def test_query_latch_records_by_name_online() -> None:
     """query_latch_records_by_name() should fetch real data."""
     name: str = "mock_record_1"
-    records: dict[RecordName, Record] = query_latch_records_by_name(name)
+    records: dict[RecordName, Record] = query_latch_records_by_name(name, table_id=MOCK_TABLE_1_ID)
 
     assert len(records) == 1
     assert name in records
@@ -27,7 +27,7 @@ def test_query_latch_records_by_name_online() -> None:
 def test_query_latch_records_by_name_online_multiple_records() -> None:
     """query_latch_records_by_name() should fetch real data."""
     names: list[str] = ["mock_record_1", "mock_record_2"]
-    records: dict[RecordName, Record] = query_latch_records_by_name(names)
+    records: dict[RecordName, Record] = query_latch_records_by_name(names, table_id=MOCK_TABLE_1_ID)
 
     assert len(records) == 2
 
@@ -51,18 +51,6 @@ def test_query_latch_records_by_name_online_gets_record_from_specified_table() -
     assert name in records
     assert records[name].get_values().get("foo") == "salutations"
     assert records[name].get_values().get("bar") == 7
-
-
-@pytest.mark.requires_latch_registry
-def test_query_latch_records_by_name_online_raises_if_records_with_duplicate_name() -> None:
-    """query_latch_records_by_name() should fetch real data."""
-    # There should be one record in `fglatch-tests / mock-table-1` and one record in
-    # `fglatch-tests / mock-table-2`
-    name: str = "duplicate_record_1"
-    with pytest.raises(ValueError) as excinfo:
-        query_latch_records_by_name(name)
-
-    assert f"Duplicate record name: {name}" in str(excinfo.value)
 
 
 @pytest.mark.requires_latch_registry
@@ -95,11 +83,15 @@ def test_query_latch_records_by_name_offline(
     """query_latch_records_by_name() should fetch mocked data."""
     mocker.patch("fglatch.registry._registry.execute", return_value=fake_gql_response)
 
+    fake_table_id = "FAKE_TABLE"
+
     mock_record_1 = mocker.MagicMock(spec=Record)
     mock_record_1.get_name.return_value = "name_1"
+    mock_record_1.get_table_id.return_value = fake_table_id
 
     mock_record_2 = mocker.MagicMock(spec=Record)
     mock_record_2.get_name.return_value = "name_2"
+    mock_record_2.get_table_id.return_value = fake_table_id
 
     mock_records = {
         "1": mock_record_1,
@@ -111,7 +103,10 @@ def test_query_latch_records_by_name_offline(
         side_effect=lambda node_id: mock_records[node_id],
     )
 
-    records: dict[RecordName, Record] = query_latch_records_by_name(["name_1", "name_2"])
+    records: dict[RecordName, Record] = query_latch_records_by_name(
+        record_names=["name_1", "name_2"],
+        table_id=fake_table_id,
+    )
 
     assert len(records) == 2
     assert "name_1" in records and "name_2" in records
@@ -134,6 +129,7 @@ def test_query_latch_records_by_name_raises_if_no_record_returned_by_gql(
 
     mock_record_1 = mocker.MagicMock(spec=Record)
     mock_record_1.get_name.return_value = "name_1"
+    mock_record_1.get_table_id.return_value = "FAKE_TABLE"
 
     mock_records = {
         "1": mock_record_1,
@@ -145,7 +141,7 @@ def test_query_latch_records_by_name_raises_if_no_record_returned_by_gql(
     )
 
     with pytest.raises(ValueError) as excinfo:
-        query_latch_records_by_name(["name_1", "name_2"])
+        query_latch_records_by_name(["name_1", "name_2"], table_id="FAKE_TABLE")
 
     assert "No record found with name: name_2" in str(excinfo.value)
 
@@ -165,14 +161,19 @@ def test_query_latch_records_by_name_raises_if_duplicate_records_returned_by_gql
     }
     mocker.patch("fglatch.registry._registry.execute", return_value=bad_response)
 
+    fake_table_id = "FAKE_TABLE"
+
     mock_record_1 = mocker.MagicMock(spec=Record)
     mock_record_1.get_name.return_value = "name_1"
+    mock_record_1.get_table_id.return_value = fake_table_id
 
     mock_record_2 = mocker.MagicMock(spec=Record)
     mock_record_2.get_name.return_value = "name_2"
+    mock_record_2.get_table_id.return_value = fake_table_id
 
     mock_record_3 = mocker.MagicMock(spec=Record)
     mock_record_3.get_name.return_value = "name_1"  # Deliberate, this creates the collision
+    mock_record_3.get_table_id.return_value = fake_table_id
 
     mock_records = {
         "1": mock_record_1,
@@ -186,7 +187,7 @@ def test_query_latch_records_by_name_raises_if_duplicate_records_returned_by_gql
     )
 
     with pytest.raises(ValueError) as excinfo:
-        query_latch_records_by_name(["name_1", "name_2"])
+        query_latch_records_by_name(["name_1", "name_2"], table_id=fake_table_id)
 
     assert "Duplicate record name: name_1 (n=2)" in str(excinfo.value)
 
@@ -205,4 +206,4 @@ def test_query_latch_records_by_name_raises_if_response_cannot_be_validated(
     mocker.patch("fglatch.registry._registry.execute", return_value=bad_response)
 
     with pytest.raises(ValidationError):
-        query_latch_records_by_name(["name_1", "name_2"])
+        query_latch_records_by_name(["name_1", "name_2"], table_id="FAKE_TABLE")
