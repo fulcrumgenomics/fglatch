@@ -1,7 +1,9 @@
 from collections import Counter
+from typing import cast
 
 import gql
 from latch.registry.record import Record
+from latch_sdk_gql import JsonArray
 from latch_sdk_gql.execute import execute
 from pydantic import BaseModel
 from pydantic import Field
@@ -55,8 +57,15 @@ def query_latch_records_by_name(
     if isinstance(record_names, str):
         record_names = [record_names]
 
+    # The `variables` argument to `execute()` is typed to receive a dict with `JsonValue` values.
+    # `list[str]` matches `JsonValue` semantically, but mypy has limitations with recursive type
+    # aliases containing forward references. In this case, it can't infer that `list[str]` satisfies
+    # the `JsonArray = list[JsonValue]` member of the `JsonValue` union since `JsonValue` and
+    # `JsonArray` circularly reference each other. The cast works around this limitation.
+    sample_names: JsonArray = cast(JsonArray, record_names)
+
     data = execute(
-        gql.gql("""
+        document=gql.gql("""
             query Query($sampleNames:[String!]) {
                 catalogSamples(filter: {name: {in: $sampleNames}}) {
                     nodes {
@@ -66,7 +75,7 @@ def query_latch_records_by_name(
                 }
             }
             """),
-        {"sampleNames": record_names},
+        variables={"sampleNames": sample_names},
     )
 
     response = CatalogSamplesQueryResponse.model_validate(data)
