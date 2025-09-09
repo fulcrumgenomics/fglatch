@@ -29,6 +29,8 @@ class CatalogSamplesQueryResponse(BaseModel):
 
 def query_latch_records_by_name(
     record_names: str | list[str],
+    /,
+    *,
     table_id: str,
 ) -> dict[RecordName, Record]:
     """
@@ -38,7 +40,7 @@ def query_latch_records_by_name(
     provided, only records from the specified table will be included in the response.
 
     Args:
-        record_names: A list of record names in the Latch Registry.
+        record_names: A record name or a list of record names in the Latch Registry.
         table_id: An optional table ID. If provided, only records from this table will be included
             in the returned dictionary.
 

@@ -104,7 +104,7 @@ def test_query_latch_records_by_name_offline(
     )
 
     records: dict[RecordName, Record] = query_latch_records_by_name(
-        record_names=["name_1", "name_2"],
+        ["name_1", "name_2"],
         table_id=fake_table_id,
     )
 
