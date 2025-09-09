@@ -4,8 +4,11 @@ from typing import Final
 
 import pytest
 import requests
+from latch.registry.table import Table
 from latch_sdk_config.latch import config
 from latch_sdk_config.user import user_config
+
+from fglatch._constants import MOCK_TABLE_1_ID
 
 FULCRUM_WORKSPACE_NAME: Final[str] = "Fulcrum Genomics"
 """The display name of the Fulcrum Genomics Latch workspace."""
@@ -60,6 +63,28 @@ def check_latch_api_connection(request: pytest.FixtureRequest) -> None:
 
     if marker is not None and NO_LATCH_API_CONNECTION:
         pytest.xfail("Test requires Latch API connection to the Fulcrum Genomics workspace.")
+
+
+def _latch_registry_is_available() -> bool:
+    """True if a connection can be made to the Latch Registry via the Latch SDK."""
+    try:
+        table = Table(id=MOCK_TABLE_1_ID)
+        table.get_columns()
+        return True
+    except Exception:
+        return False
+
+
+NO_LATCH_REGISTRY_CONNECTION: bool = not _latch_registry_is_available()
+
+
+@pytest.fixture(autouse=True)
+def check_latch_registry_connection(request: pytest.FixtureRequest) -> None:
+    """Skip tests that require a Latch API connection."""
+    marker = request.node.get_closest_marker("requires_latch_registry")
+
+    if marker is not None and NO_LATCH_REGISTRY_CONNECTION:
+        pytest.xfail("Test requires Latch SDK connection to the Fulcrum Genomics Latch Registry.")
 
 
 @pytest.fixture(scope="session")

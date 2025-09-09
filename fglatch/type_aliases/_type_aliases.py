@@ -42,3 +42,6 @@ A workflow's version.
 For Fulcrum-developed workflows, this is typically a SemVer-compliant version string, optionally
 suffixed with `-dev`, and appended with one or more hashes (Latch and git commit).
 """
+
+RecordName: TypeAlias = str
+"""The name (primary key) of a Latch Registry record."""

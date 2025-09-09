@@ -130,6 +130,10 @@ ignore_missing_imports = true
 module = "latch_sdk_config.*"
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "latch_sdk_gql.*"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 minversion = "7.4"
 addopts    = [
@@ -138,7 +142,8 @@ addopts    = [
     "--cov"
 ]
 markers = [
-    "requires_latch_api: mark test as requiring Latch API connection"
+    "requires_latch_api: mark test as requiring Latch API connection",
+    "requires_latch_registry: mark test as requiring Latch Registry connection",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning:flyteidl.admin.*",
