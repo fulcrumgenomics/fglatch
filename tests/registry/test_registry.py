@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from pytest_mock import MockerFixture
 
 from fglatch._constants import MOCK_TABLE_1_ID
+from fglatch.registry import LatchRecordModel
 from fglatch.registry import query_latch_records_by_name
 from fglatch.type_aliases import RecordName
 
@@ -207,3 +208,25 @@ def test_query_latch_records_by_name_raises_if_response_cannot_be_validated(
 
     with pytest.raises(ValidationError):
         query_latch_records_by_name(["name_1", "name_2"], table_id="FAKE_TABLE")
+
+
+@pytest.mark.requires_latch_registry
+def test_latch_record_model() -> None:
+    """LatchRecordModel should validate real data."""
+
+    class MockRecord(LatchRecordModel):
+        table_id = MOCK_TABLE_1_ID
+        foo: str
+        bar: int
+
+    name: str = "mock_record_1"
+    records: dict[RecordName, Record] = query_latch_records_by_name(name, table_id=MOCK_TABLE_1_ID)
+
+    assert len(records) == 1
+    assert name in records
+
+    validated_record = MockRecord.from_record(records[name])
+
+    assert validated_record.name == name
+    assert validated_record.foo == "hello"
+    assert validated_record.bar == 42
