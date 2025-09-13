@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from pathlib import Path
 from typing import Final
@@ -8,7 +9,9 @@ from latch_cli.services.launch import launch_v2
 from pytest import LogCaptureFixture
 from pytest_mock import MockerFixture
 
+from fglatch import ExecutionStatus
 from fglatch.tools.submit import _latchify_params
+from fglatch.tools.submit import _wait_for_execution_completion
 from fglatch.tools.submit import submit
 from fglatch.type_aliases._type_aliases import JsonDict
 
@@ -155,3 +158,108 @@ def test_latchify_params() -> None:
             assert value.path == params[key]
         else:
             assert value == params[key]
+
+
+@pytest.mark.asyncio
+async def test_wait_for_execution_completion_success(
+    mocker: MockerFixture,
+) -> None:
+    """Test _wait_for_execution_completion with successful completion."""
+    mock_execution = mocker.MagicMock(spec=launch_v2.Execution, id="test-exec-123")
+    mock_completed_execution = mocker.MagicMock(
+        spec=launch_v2.CompletedExecution,
+        status="SUCCEEDED",
+    )
+
+    mock_execution.wait.return_value = mock_completed_execution
+
+    status: ExecutionStatus | None = await _wait_for_execution_completion(
+        execution=mock_execution, timeout_minutes=5
+    )
+
+    assert status is ExecutionStatus.SUCCEEDED
+    mock_execution.wait.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_wait_for_execution_completion_timeout(
+    mocker: MockerFixture,
+    caplog: LogCaptureFixture,
+) -> None:
+    """Test _wait_for_execution_completion with timeout."""
+    caplog.set_level(logging.ERROR)
+
+    mock_execution = mocker.MagicMock(spec=launch_v2.Execution, id="test-exec-timeout")
+
+    async def slow_wait() -> None:
+        await asyncio.sleep(10)  # Simulate long-running execution
+        return None
+
+    mock_execution.wait.side_effect = slow_wait
+
+    with pytest.raises(asyncio.TimeoutError):
+        await _wait_for_execution_completion(
+            execution=mock_execution,
+            timeout_minutes=0.001,  # Very short timeout
+        )
+
+    assert "Workflow did not complete within 0.001 minutes" in caplog.text
+    assert "Execution ID: test-exec-timeout" in caplog.text
+
+
+def test_submit_with_wait_for_termination_success(
+    mocker: MockerFixture,
+    caplog: LogCaptureFixture,
+    tim_parameter_json: Path,
+) -> None:
+    """Test submit() with wait_for_termination=True and successful completion."""
+    caplog.set_level(logging.INFO)
+
+    mock_execution = mocker.MagicMock(spec=launch_v2.Execution, id="success-exec")
+    mocker.patch("fglatch.tools.submit.launch_v2.launch", return_value=mock_execution)
+
+    mock_wait = mocker.patch(
+        "fglatch.tools.submit._wait_for_execution_completion",
+        return_value=ExecutionStatus.SUCCEEDED,
+    )
+    mocker.patch("fglatch.tools.submit.asyncio.run", side_effect=lambda _: mock_wait.return_value)
+
+    submit(
+        wf_name=FULCRUM_LATCH_HELLO_WORLD_WF_NAME,
+        wf_version=FULCRUM_LATCH_HELLO_WORLD_WF_VERSION,
+        parameter_json=tim_parameter_json,
+        wait_for_termination=True,
+    )
+
+    assert "Submitted workflow with execution ID: success-exec" in caplog.text
+    assert "Workflow succeeded!" in caplog.text
+
+
+def test_submit_with_wait_for_termination_failed(
+    mocker: MockerFixture,
+    caplog: LogCaptureFixture,
+    tim_parameter_json: Path,
+) -> None:
+    """Test submit() with wait_for_termination=True and failed completion."""
+    caplog.set_level(logging.INFO)
+
+    mock_execution = mocker.MagicMock(spec=launch_v2.Execution, id="failed-exec")
+    mocker.patch("fglatch.tools.submit.launch_v2.launch", return_value=mock_execution)
+
+    mock_wait = mocker.patch(
+        "fglatch.tools.submit._wait_for_execution_completion", return_value=ExecutionStatus.FAILED
+    )
+    mocker.patch("fglatch.tools.submit.asyncio.run", side_effect=lambda _: mock_wait.return_value)
+
+    mock_sys_exit = mocker.patch("fglatch.tools.submit.sys.exit")
+
+    submit(
+        wf_name=FULCRUM_LATCH_HELLO_WORLD_WF_NAME,
+        wf_version=FULCRUM_LATCH_HELLO_WORLD_WF_VERSION,
+        parameter_json=tim_parameter_json,
+        wait_for_termination=True,
+    )
+
+    assert "Submitted workflow with execution ID: failed-exec" in caplog.text
+    assert "Workflow completed with unsuccessful status: FAILED" in caplog.text
+    mock_sys_exit.assert_called_once_with(1)

@@ -11,6 +11,7 @@ dependencies    = [
     "defopt~=6.4",
     "latch>=2.67.2,<3",
     "pydantic~=2.11",
+    "pytest-asyncio>=1.2.0",
     "requests~=2.31",
     "requests-ratelimiter~=0.7",
     "xattr~=1.1",

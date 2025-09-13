@@ -1,14 +1,20 @@
+import asyncio
 import json
 import logging
+import sys
 from pathlib import Path
 
 from latch.ldata.path import LPath
 from latch_cli.services.launch import launch_v2
 from pydantic import JsonValue
 
+from fglatch import ExecutionStatus
 from fglatch.type_aliases._type_aliases import JsonDict
 
 logger = logging.getLogger(__name__)
+
+
+DEFAULT_TERMINATION_TIMEOUT_MINUTES: int = 15
 
 
 def submit(
@@ -17,6 +23,8 @@ def submit(
     wf_version: str | None = None,
     launch_plan: str | None = None,
     parameter_json: Path | None = None,
+    wait_for_termination: bool = False,
+    termination_timeout: int = DEFAULT_TERMINATION_TIMEOUT_MINUTES,
 ) -> None:
     """
     Submit a workflow execution to Latch.
@@ -34,6 +42,9 @@ def submit(
             This is mutually exclusive with `parameter_json`.
         parameter_json: A path to a JSON containing custom parameter mappings for the execution.
             This is mutually exclusive with `launch_plan`.
+        wait_for_termination: If specified, the tool will wait for the workflow to terminate before
+            exiting.
+        termination_timeout: The length of time, in minutes, the tool will wait for termination.
 
     Raises:
         ValueError: if neither or both of `--launch-plan` and `--parameter-json` are specified.
@@ -68,6 +79,25 @@ def submit(
 
     logger.info(f"Submitted workflow with execution ID: {latch_execution.id}")
 
+    if not wait_for_termination:
+        return
+
+    status: ExecutionStatus | None = asyncio.run(
+        _wait_for_execution_completion(
+            execution=latch_execution,
+            timeout_minutes=termination_timeout,
+        )
+    )
+
+    if status is None:
+        logger.error("Workflow did not terminate.")
+        sys.exit(1)
+    elif status is not ExecutionStatus.SUCCEEDED:
+        logger.error(f"Workflow completed with unsuccessful status: {status}")
+        sys.exit(1)
+    else:
+        logger.info("Workflow succeeded!")
+
 
 def _latchify_params(params: JsonDict) -> dict[str, JsonValue | LPath]:
     """
@@ -90,3 +120,38 @@ def _latchify_params(params: JsonDict) -> dict[str, JsonValue | LPath]:
             latchified_params[key] = value
 
     return latchified_params
+
+
+async def _wait_for_execution_completion(
+    execution: launch_v2.Execution,
+    timeout_minutes: int | float,
+) -> ExecutionStatus | None:
+    """
+    Wait for a Latch execution to complete with a timeout.
+
+    Args:
+        execution: The Latch execution to wait for.
+        timeout_minutes: Maximum time to wait in minutes.
+
+    Raises:
+        asyncio.TimeoutError: If the execution doesn't complete within the timeout.
+    """
+    timeout_seconds: float = timeout_minutes * 60.0
+
+    try:
+        completed_execution: launch_v2.CompletedExecution | None = await asyncio.wait_for(
+            execution.wait(),
+            timeout=timeout_seconds,
+        )
+        status: ExecutionStatus | None = (
+            ExecutionStatus(completed_execution.status) if completed_execution is not None else None
+        )
+
+    except asyncio.TimeoutError:
+        logger.error(
+            f"Workflow did not complete within {timeout_minutes} minutes. "
+            f"Execution ID: {execution.id}"
+        )
+        raise
+
+    return status
