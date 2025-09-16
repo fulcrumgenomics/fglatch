@@ -2,6 +2,7 @@ from typing import Any
 
 import pytest
 from latch.registry.record import Record
+from latch.registry.table import Table
 from pydantic import ValidationError
 from pytest_mock import MockerFixture
 
@@ -230,3 +231,33 @@ def test_latch_record_model() -> None:
     assert validated_record.name == name
     assert validated_record.foo == "hello"
     assert validated_record.bar == 42
+
+
+def test_latch_record_model_raises_if_no_table_id() -> None:
+    """LatchRecordModel must include a table ID."""
+    with pytest.raises(TypeError, match="must define a 'table_id' class variable"):
+
+        class BadRecordModel(LatchRecordModel):
+            foo: str
+            bar: int
+
+
+def test_from_record_raises_if_wrong_table_id(mocker: MockerFixture) -> None:
+    """LatchRecordModel.from_record must be given a record from the same table."""
+    expected_table_id = "1234"
+    mock_table = mocker.MagicMock(spec=Table)
+    mock_table.id = expected_table_id
+    mock_table.get_display_name.return_value = "Expected Table"
+    mocker.patch("fglatch.registry._record_model.Table", return_value=mock_table)
+
+    mock_record = mocker.MagicMock(spec=Record)
+    mock_record.get_table_id.return_value = "567"
+
+    class MyRecord(LatchRecordModel):
+        table_id = expected_table_id
+        foo: str
+
+    with pytest.raises(ValueError, match="Records must come from the table") as excinfo:
+        MyRecord.from_record(mock_record)
+
+    assert str(excinfo.value) == "Records must come from the table Expected Table (id=1234)"

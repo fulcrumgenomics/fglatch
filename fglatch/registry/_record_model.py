@@ -1,9 +1,10 @@
+from functools import lru_cache
 from typing import Any
 from typing import ClassVar
 from typing import Self
 
 from latch.registry.record import Record
-from latch.registry.table import Table
+from latch.registry.table import Table, TableNotFoundError
 from pydantic import BaseModel
 
 
@@ -44,15 +45,30 @@ class LatchRecordModel(BaseModel):
     """
 
     table_id: ClassVar[str]
-    _table_name: ClassVar[str]
 
     id: str
     name: str
 
-    @classmethod
     def __init_subclass__(cls, **kwargs: Any) -> None:
-        table = Table(id=cls.table_id)
-        cls._table_name = table.get_display_name()
+        """Require subclasses to declare a registry table ID."""
+        super().__init_subclass__(**kwargs)
+
+        # Check if table_id is defined in this class (not inherited)
+        if "table_id" not in cls.__dict__:
+            raise TypeError(f"{cls.__name__} must define a 'table_id' class variable")
+
+    @classmethod
+    @lru_cache(maxsize=1)
+    def _table_name(cls) -> str:
+        """The display name of the source Registry table."""
+        table_name: str
+        try:
+            table = Table(id=cls.table_id)
+            table_name = table.get_display_name()
+        except TableNotFoundError as e:
+            table_name = 
+
+        return table_name
 
     @classmethod
     def from_record(cls, record: Record) -> Self:
@@ -76,7 +92,7 @@ class LatchRecordModel(BaseModel):
         """
         if record.get_table_id() != cls.table_id:
             raise ValueError(
-                f"Records must come from the table {cls._table_name} (id={cls.table_id})"
+                f"Records must come from the table {cls._table_name()} (id={cls.table_id})"
             )
 
         # Convert a Record to a dictionary.
