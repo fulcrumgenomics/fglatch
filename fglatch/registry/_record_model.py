@@ -1,10 +1,9 @@
-from functools import lru_cache
 from typing import Any
-from typing import ClassVar
 from typing import Self
 
 from latch.registry.record import Record
-from latch.registry.table import Table, TableNotFoundError
+from latch.registry.table import Table
+from latch.registry.table import TableNotFoundError
 from pydantic import BaseModel
 
 
@@ -39,39 +38,13 @@ class LatchRecordModel(BaseModel):
     Attributes:
         id: The unique identifier of the record.
         name: The record's `Name` (primary key) in the Registry table.
-
-    Class Variables:
-        table_id: The ID of the source Registry table. Must be defined in subclasses.
     """
-
-    table_id: ClassVar[str]
 
     id: str
     name: str
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        """Require subclasses to declare a registry table ID."""
-        super().__init_subclass__(**kwargs)
-
-        # Check if table_id is defined in this class (not inherited)
-        if "table_id" not in cls.__dict__:
-            raise TypeError(f"{cls.__name__} must define a 'table_id' class variable")
-
     @classmethod
-    @lru_cache(maxsize=1)
-    def _table_name(cls) -> str:
-        """The display name of the source Registry table."""
-        table_name: str
-        try:
-            table = Table(id=cls.table_id)
-            table_name = table.get_display_name()
-        except TableNotFoundError as e:
-            table_name = 
-
-        return table_name
-
-    @classmethod
-    def from_record(cls, record: Record) -> Self:
+    def from_record(cls, record: Record, table_id: str | None = None) -> Self:
         """
         Create a validated model instance from a Latch Registry Record.
 
@@ -80,20 +53,19 @@ class LatchRecordModel(BaseModel):
 
         Args:
             record: A record retrieved from a Latch Registry table via the SDK.
+            table_id: An optional table ID to check the record against.
 
         Returns:
             A validated instance of the model with all field data populated.
 
         Raises:
             ValueError: If the record originates from a different table than the one specified by
-                this model's `table_id`.
+                `table_id`.
             ValidationError: If the record data fails model validation (e.g. missing required
                 fields, incorrect types).
         """
-        if record.get_table_id() != cls.table_id:
-            raise ValueError(
-                f"Records must come from the table {cls._table_name()} (id={cls.table_id})"
-            )
+        if table_id is not None:
+            _validate_source_table(record, table_id)
 
         # Convert a Record to a dictionary.
         values: dict[str, Any] = record.get_values()
@@ -104,3 +76,47 @@ class LatchRecordModel(BaseModel):
         values["id"] = record.id
 
         return cls.model_validate(values)
+
+
+def _safe_table_name(table_id: str) -> str | None:
+    """
+    The display name of a given Registry table.
+
+    Returns:
+        The display name of the specified table. None if the table can't be loaded.
+    """
+    try:
+        table = Table(id=table_id)
+        return table.get_display_name()
+    except TableNotFoundError:
+        return None
+
+
+def _validate_source_table(record: Record, table_id: str) -> None:
+    """
+    Validate the record came from the specified table.
+
+    Raises:
+        TableNotFoundError: If the table specified by `table_id` does not exist.
+        ValueError: If `record` originated from a different table.
+    """
+    table_name: str | None = _safe_table_name(table_id)
+    if table_name is None:
+        raise TableNotFoundError(
+            f"Could not retrieve table id={table_id}.\n"
+            "Please check that the table ID is correct and that it exists in the active workspace."
+        )
+
+    record_table_id: str = record.get_table_id()
+    if record_table_id != table_id:
+        # NB: the string interpolation here is a little hacky. I think it's safe to assume that the
+        # table from which the record originated still exists, so record_table_name is not None.
+        # If that _isn't_ the case, I'd rather this error message just print `table None (id=<id>)`
+        # instead of a more opaque message, or adding more detailed handling to the formatting of
+        # this message.
+        record_table_name: str | None = _safe_table_name(record_table_id)
+        raise ValueError(
+            f"Records must come from the table {table_name} (id={table_id}).\n"
+            f"Record {record.get_name()} (id={record.id}) originated from "
+            f"table {record_table_name} (id={record_table_id})."
+        )
