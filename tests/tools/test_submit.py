@@ -38,8 +38,6 @@ def test_submit_from_params_online(caplog: LogCaptureFixture, tim_parameter_json
 
     assert "Submitted workflow with execution ID:" in caplog.text
 
-    # TODO wait for termination and check outputs
-
 
 @pytest.mark.requires_latch_api
 @pytest.mark.xfail
@@ -173,11 +171,11 @@ async def test_wait_for_execution_completion_success(
 
     mock_execution.wait.return_value = mock_completed_execution
 
-    status: ExecutionStatus | None = await _wait_for_execution_completion(
+    completed_execution: launch_v2.CompletedExecution = await _wait_for_execution_completion(
         execution=mock_execution, timeout_minutes=5
     )
 
-    assert status is ExecutionStatus.SUCCEEDED
+    assert ExecutionStatus(completed_execution.status) is ExecutionStatus.SUCCEEDED
     mock_execution.wait.assert_called_once()
 
 
@@ -218,9 +216,13 @@ def test_submit_with_wait_for_termination_success(
     mock_execution = mocker.MagicMock(spec=launch_v2.Execution, id="success-exec")
     mocker.patch("fglatch.tools.submit.launch_v2.launch", return_value=mock_execution)
 
+    mock_completed_execution = mocker.MagicMock(
+        spec=launch_v2.CompletedExecution,
+        status="SUCCEEDED",
+    )
     mock_wait = mocker.patch(
         "fglatch.tools.submit._wait_for_execution_completion",
-        return_value=ExecutionStatus.SUCCEEDED,
+        return_value=mock_completed_execution,
     )
     mocker.patch("fglatch.tools.submit.asyncio.run", side_effect=lambda _: mock_wait.return_value)
 
@@ -246,8 +248,10 @@ def test_submit_with_wait_for_termination_failed(
     mock_execution = mocker.MagicMock(spec=launch_v2.Execution, id="failed-exec")
     mocker.patch("fglatch.tools.submit.launch_v2.launch", return_value=mock_execution)
 
+    mock_completed_execution = mocker.MagicMock(spec=launch_v2.CompletedExecution, status="FAILED")
     mock_wait = mocker.patch(
-        "fglatch.tools.submit._wait_for_execution_completion", return_value=ExecutionStatus.FAILED
+        "fglatch.tools.submit._wait_for_execution_completion",
+        return_value=mock_completed_execution,
     )
     mocker.patch("fglatch.tools.submit.asyncio.run", side_effect=lambda _: mock_wait.return_value)
 

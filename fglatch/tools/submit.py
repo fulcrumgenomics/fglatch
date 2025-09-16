@@ -82,17 +82,15 @@ def submit(
     if not wait_for_termination:
         return
 
-    status: ExecutionStatus | None = asyncio.run(
+    completed_execution: launch_v2.CompletedExecution = asyncio.run(
         _wait_for_execution_completion(
             execution=latch_execution,
             timeout_minutes=termination_timeout,
         )
     )
 
-    if status is None:
-        logger.error("Workflow did not terminate.")
-        sys.exit(1)
-    elif status is not ExecutionStatus.SUCCEEDED:
+    status = ExecutionStatus(completed_execution.status)
+    if status is not ExecutionStatus.SUCCEEDED:
         logger.error(f"Workflow completed with unsuccessful status: {status}")
         sys.exit(1)
     else:
@@ -125,7 +123,7 @@ def _latchify_params(params: JsonDict) -> dict[str, JsonValue | LPath]:
 async def _wait_for_execution_completion(
     execution: launch_v2.Execution,
     timeout_minutes: int | float,
-) -> ExecutionStatus | None:
+) -> launch_v2.CompletedExecution:
     """
     Wait for a Latch execution to complete with a timeout.
 
@@ -135,6 +133,8 @@ async def _wait_for_execution_completion(
 
     Raises:
         asyncio.TimeoutError: If the execution doesn't complete within the timeout.
+        RuntimeError: If we successfully wait for the execution but the Latch SDK doesn't return
+            a completed execution. (Should be unreachable.)
     """
     timeout_seconds: float = timeout_minutes * 60.0
 
@@ -142,9 +142,6 @@ async def _wait_for_execution_completion(
         completed_execution: launch_v2.CompletedExecution | None = await asyncio.wait_for(
             execution.wait(),
             timeout=timeout_seconds,
-        )
-        status: ExecutionStatus | None = (
-            ExecutionStatus(completed_execution.status) if completed_execution is not None else None
         )
 
     except asyncio.TimeoutError:
@@ -154,4 +151,8 @@ async def _wait_for_execution_completion(
         )
         raise
 
-    return status
+    if completed_execution is None:
+        # _should_ be unreachable - as I understand the implementation, `wait()` cannot return None
+        raise RuntimeError(f"Execution did not complete: {execution.id}")
+
+    return completed_execution
