@@ -4,10 +4,10 @@ from latch.registry.table import Table
 from latch.registry.table import TableNotFoundError
 from pytest_mock import MockerFixture
 
-from fglatch._constants import MOCK_RECORD_1_ID
-from fglatch._constants import MOCK_TABLE_1_ID
 from fglatch.registry._record_model import _safe_table_name
 from fglatch.registry._record_model import _validate_source_table
+from tests.constants import MOCK_RECORD_1_ID
+from tests.constants import MOCK_TABLE_1_ID
 
 
 def test_safe_table_name(mocker: MockerFixture) -> None:

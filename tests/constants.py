@@ -1,3 +1,5 @@
+"""Constants used by the test suite."""
+
 MOCK_TABLE_1_ID: str = "11730"
 """Identifier for mock-table-1."""
 

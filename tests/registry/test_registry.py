@@ -6,10 +6,10 @@ from latch.registry.table import Table
 from pydantic import ValidationError
 from pytest_mock import MockerFixture
 
-from fglatch._constants import MOCK_TABLE_1_ID
 from fglatch.registry import LatchRecordModel
 from fglatch.registry import query_latch_records_by_name
 from fglatch.type_aliases import RecordName
+from tests.constants import MOCK_TABLE_1_ID
 
 
 @pytest.mark.requires_latch_registry
