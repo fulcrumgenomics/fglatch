@@ -8,7 +8,7 @@ from latch.registry.table import Table
 from latch_sdk_config.latch import config
 from latch_sdk_config.user import user_config
 
-from fglatch._constants import MOCK_TABLE_1_ID
+from tests.constants import MOCK_TABLE_1_ID
 
 FULCRUM_WORKSPACE_NAME: Final[str] = "Fulcrum Genomics"
 """The display name of the Fulcrum Genomics Latch workspace."""

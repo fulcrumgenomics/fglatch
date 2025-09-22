@@ -2,12 +2,14 @@ from typing import Any
 
 import pytest
 from latch.registry.record import Record
+from latch.registry.table import Table
 from pydantic import ValidationError
 from pytest_mock import MockerFixture
 
-from fglatch._constants import MOCK_TABLE_1_ID
+from fglatch.registry import LatchRecordModel
 from fglatch.registry import query_latch_records_by_name
 from fglatch.type_aliases import RecordName
+from tests.constants import MOCK_TABLE_1_ID
 
 
 @pytest.mark.requires_latch_registry
@@ -207,3 +209,44 @@ def test_query_latch_records_by_name_raises_if_response_cannot_be_validated(
 
     with pytest.raises(ValidationError):
         query_latch_records_by_name(["name_1", "name_2"], table_id="FAKE_TABLE")
+
+
+class MockRecord(LatchRecordModel):
+    """
+    A fake record for testing.
+
+    Corresponds to `mock-table-1` (id=11730) in the Fulcrum workspace.
+    """
+
+    foo: str
+    bar: int
+
+
+@pytest.mark.requires_latch_registry
+def test_latch_record_model() -> None:
+    """LatchRecordModel should validate real data."""
+    name: str = "mock_record_1"
+    records: dict[RecordName, Record] = query_latch_records_by_name(name, table_id=MOCK_TABLE_1_ID)
+
+    assert len(records) == 1
+    assert name in records
+
+    validated_record = MockRecord.from_record(records[name])
+
+    assert validated_record.name == name
+    assert validated_record.foo == "hello"
+    assert validated_record.bar == 42
+
+
+def test_from_record_raises_if_wrong_table_id(mocker: MockerFixture) -> None:
+    """LatchRecordModel.from_record must be given a record from the same table."""
+    expected_table_id = "1234"
+    mock_table = mocker.MagicMock(spec=Table, id=expected_table_id)
+    mock_table.get_display_name.return_value = "Expected Table"
+    mocker.patch("fglatch.registry._record_model.Table", return_value=mock_table)
+
+    mock_record = mocker.MagicMock(spec=Record, id="4505")
+    mock_record.get_table_id.return_value = "567"
+
+    with pytest.raises(ValueError, match="Records must come from the table Expected"):
+        MockRecord.from_record(mock_record, expected_table_id)
