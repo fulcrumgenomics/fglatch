@@ -5,9 +5,9 @@ from typing import List
 
 import defopt
 
-from fglatch.tools import submit
+from fglatch._tools import submit
 
-_tools: List[Callable] = [
+TOOLS: List[Callable] = [
     submit,
 ]
 
@@ -26,7 +26,7 @@ def run() -> None:
     logger = logging.getLogger("fglatch")
     logger.info("Executing: " + " ".join(sys.argv))
     defopt.run(
-        funcs=_tools,
+        funcs=TOOLS,
         argv=sys.argv[1:],
     )
     logger.info("Finished executing successfully.")
