@@ -36,7 +36,7 @@ classifiers     = [
 "Bug Tracker" = "https://github.com/fulcrumgenomics/fglatch/issues"
 
 [project.scripts]
-fglatch = "fglatch.main:run"
+fglatch = "fglatch._main:run"
 
 [build-system]
 requires      = ["hatchling"]

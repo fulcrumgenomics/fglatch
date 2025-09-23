@@ -10,9 +10,9 @@ from pytest import LogCaptureFixture
 from pytest_mock import MockerFixture
 
 from fglatch import ExecutionStatus
-from fglatch.tools.submit import _latchify_params
-from fglatch.tools.submit import _wait_for_execution_completion
-from fglatch.tools.submit import submit
+from fglatch._tools.submit import _latchify_params
+from fglatch._tools.submit import _wait_for_execution_completion
+from fglatch._tools.submit import submit
 from fglatch.type_aliases._type_aliases import JsonDict
 
 FULCRUM_LATCH_HELLO_WORLD_WF_NAME: Final[str] = "wf.__init__.hello_world"
@@ -55,7 +55,7 @@ def test_submit_from_params_offline(
     caplog.set_level(logging.INFO)
 
     mock_execution = mocker.MagicMock(spec=launch_v2.Execution, id="123456")
-    patch = mocker.patch("fglatch.tools.submit.launch_v2.launch", return_value=mock_execution)
+    patch = mocker.patch("fglatch._tools.submit.launch_v2.launch", return_value=mock_execution)
 
     submit(
         wf_name=FULCRUM_LATCH_HELLO_WORLD_WF_NAME,
@@ -87,7 +87,7 @@ def test_submit_from_launch_plan_offline(
 
     mock_execution = mocker.MagicMock(spec=launch_v2.Execution, id="123456")
     patch = mocker.patch(
-        "fglatch.tools.submit.launch_v2.launch_from_launch_plan",
+        "fglatch._tools.submit.launch_v2.launch_from_launch_plan",
         return_value=mock_execution,
     )
 
@@ -214,17 +214,17 @@ def test_submit_with_wait_for_termination_success(
     caplog.set_level(logging.INFO)
 
     mock_execution = mocker.MagicMock(spec=launch_v2.Execution, id="success-exec")
-    mocker.patch("fglatch.tools.submit.launch_v2.launch", return_value=mock_execution)
+    mocker.patch("fglatch._tools.submit.launch_v2.launch", return_value=mock_execution)
 
     mock_completed_execution = mocker.MagicMock(
         spec=launch_v2.CompletedExecution,
         status="SUCCEEDED",
     )
     mock_wait = mocker.patch(
-        "fglatch.tools.submit._wait_for_execution_completion",
+        "fglatch._tools.submit._wait_for_execution_completion",
         return_value=mock_completed_execution,
     )
-    mocker.patch("fglatch.tools.submit.asyncio.run", side_effect=lambda _: mock_wait.return_value)
+    mocker.patch("fglatch._tools.submit.asyncio.run", side_effect=lambda _: mock_wait.return_value)
 
     submit(
         wf_name=FULCRUM_LATCH_HELLO_WORLD_WF_NAME,
@@ -246,16 +246,16 @@ def test_submit_with_wait_for_termination_failed(
     caplog.set_level(logging.INFO)
 
     mock_execution = mocker.MagicMock(spec=launch_v2.Execution, id="failed-exec")
-    mocker.patch("fglatch.tools.submit.launch_v2.launch", return_value=mock_execution)
+    mocker.patch("fglatch._tools.submit.launch_v2.launch", return_value=mock_execution)
 
     mock_completed_execution = mocker.MagicMock(spec=launch_v2.CompletedExecution, status="FAILED")
     mock_wait = mocker.patch(
-        "fglatch.tools.submit._wait_for_execution_completion",
+        "fglatch._tools.submit._wait_for_execution_completion",
         return_value=mock_completed_execution,
     )
-    mocker.patch("fglatch.tools.submit.asyncio.run", side_effect=lambda _: mock_wait.return_value)
+    mocker.patch("fglatch._tools.submit.asyncio.run", side_effect=lambda _: mock_wait.return_value)
 
-    mock_sys_exit = mocker.patch("fglatch.tools.submit.sys.exit")
+    mock_sys_exit = mocker.patch("fglatch._tools.submit.sys.exit")
 
     submit(
         wf_name=FULCRUM_LATCH_HELLO_WORLD_WF_NAME,

@@ -4,16 +4,16 @@ from typing import Callable
 import pytest
 from defopt import signature
 
-from fglatch import main
+from fglatch import _main
 
 
-@pytest.mark.parametrize("tool", main._tools)
+@pytest.mark.parametrize("tool", _main.TOOLS)
 def test_tools_are_defined(tool: Callable) -> None:
     """Test that all command line tools passed to defopt are defined functions."""
     assert isfunction(tool)
 
 
-@pytest.mark.parametrize("tool", main._tools)
+@pytest.mark.parametrize("tool", _main.TOOLS)
 def test_tools_have_valid_docstrings(tool: Callable) -> None:
     """Test that all command line tools have a valid defopt docstring."""
     try:

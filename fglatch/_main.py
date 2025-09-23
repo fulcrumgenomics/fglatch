@@ -5,7 +5,11 @@ from typing import List
 
 import defopt
 
-_tools: List[Callable] = []
+from fglatch._tools import submit
+
+TOOLS: List[Callable] = [
+    submit,
+]
 
 
 def setup_logging(level: str = "INFO") -> None:
@@ -22,7 +26,7 @@ def run() -> None:
     logger = logging.getLogger("fglatch")
     logger.info("Executing: " + " ".join(sys.argv))
     defopt.run(
-        funcs=_tools,
+        funcs=TOOLS,
         argv=sys.argv[1:],
     )
     logger.info("Finished executing successfully.")
