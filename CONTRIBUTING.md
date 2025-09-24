@@ -118,7 +118,7 @@ Select Workspace
 > - `PATCH` version when you make backwards compatible bug fixes
 
 1. Decide on the new version number to be released.
-   - Go to the [latest release](https://github.com/fulcrumgenomics/fgpyo/releases/latest) and see what's been committed since then!
+   - Go to the [latest release](https://github.com/fulcrumgenomics/fglatch/releases/latest) and see what's been committed since then!
    - Pick the appropriate new SemVer version number.
 2. Clone the repository and ensure you are on the `main` branch.
 3. Checkout a new branch to prepare the library for release, e.g.:
