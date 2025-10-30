@@ -70,6 +70,12 @@ class LatchRecordModel(BaseModel):
         # Convert a Record to a dictionary.
         values: dict[str, Any] = record.get_values()
 
+        # Linked Record values are returned as Record objects, but Pydantic models expect primitive
+        # types, so here we convert any linked Records to their names.
+        for key, value in values.items():
+            if isinstance(value, Record):
+                values[key] = value.get_name()
+
         # The record's name and ID are not included in the dictionary returned by
         # `Record.get_values()`, and they must be added manually.
         values["name"] = record.get_name()

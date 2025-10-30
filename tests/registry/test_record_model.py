@@ -4,9 +4,12 @@ from latch.registry.table import Table
 from latch.registry.table import TableNotFoundError
 from pytest_mock import MockerFixture
 
+from fglatch.registry._record_model import LatchRecordModel
 from fglatch.registry._record_model import _safe_table_name
 from fglatch.registry._record_model import _validate_source_table
+from tests.constants import MOCK_LINKED_RECORD_NAME
 from tests.constants import MOCK_RECORD_1_ID
+from tests.constants import MOCK_RECORD_1_NAME
 from tests.constants import MOCK_TABLE_1_ID
 
 
@@ -79,3 +82,34 @@ def test_validate_source_table_raises_if_table_different(mocker: MockerFixture) 
         "Records must come from the table Expected Table (id=567).\n"
         "Record DNA123/seq_abc (id=123) originated from table Actual Table (id=1234)."
     )
+
+
+class TestRecordModel(LatchRecordModel):
+    """Test Pydantic model for Record."""
+
+    field_str: str
+    field_int: int
+    field_linked_record: str
+
+
+def test_record_model_from_record(mocker: MockerFixture) -> None:
+    """Test that linked Record fields are converted to names."""
+    linked_record = mocker.MagicMock(spec=Record)
+    linked_record.get_name.return_value = MOCK_LINKED_RECORD_NAME
+
+    mock_record = mocker.MagicMock(spec=Record)
+    mock_record.get_values.return_value = {
+        "field_str": "value",
+        "field_int": 42,
+        "field_linked_record": linked_record,
+    }
+    mock_record.get_name.return_value = MOCK_RECORD_1_NAME
+    mock_record.id = MOCK_RECORD_1_ID
+
+    model_instance = TestRecordModel.from_record(mock_record)
+
+    assert model_instance.name == MOCK_RECORD_1_NAME
+    assert model_instance.id == MOCK_RECORD_1_ID
+    assert model_instance.field_str == "value"
+    assert model_instance.field_int == 42
+    assert model_instance.field_linked_record == MOCK_LINKED_RECORD_NAME
