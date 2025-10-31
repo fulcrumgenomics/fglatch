@@ -4,7 +4,8 @@ from latch.registry.table import Table
 from latch.registry.table import TableNotFoundError
 from pytest_mock import MockerFixture
 
-from fglatch.registry._record_model import LatchRecordModel
+from fglatch.registry import LatchRecordModel
+from fglatch.registry import query_latch_records_by_name
 from fglatch.registry._record_model import _safe_table_name
 from fglatch.registry._record_model import _validate_source_table
 from tests.constants import MOCK_LINKED_RECORD_NAME
@@ -84,32 +85,55 @@ def test_validate_source_table_raises_if_table_different(mocker: MockerFixture) 
     )
 
 
-class TestRecordModel(LatchRecordModel):
-    """Test Pydantic model for Record."""
+@pytest.mark.requires_latch_registry
+def test_linked_record_online() -> None:
+    """Test that we can load a linked record."""
 
-    field_str: str
-    field_int: int
-    field_linked_record: str
+    class Gene(LatchRecordModel):
+        """Represent a record from the Gene table."""
+
+        symbol: str
+
+    class Transcript(LatchRecordModel):
+        """Represent a record from the Transcript table."""
+
+        shortname: str
+        gene: Gene
+
+    transcript_table_id = "12146"
+    transcript_record_name = "ENST00000651671.1"
+
+    records = query_latch_records_by_name(transcript_record_name, table_id=transcript_table_id)
+    assert len(records) == 1
+
+    record = records[transcript_record_name]
+    transcript = Transcript.from_record(record, table_id=transcript_table_id)
+
+    assert transcript.name == transcript_record_name
+    assert transcript.shortname == "NOTCH1-204"
+    assert isinstance(transcript.gene, Gene)
+
+    assert transcript.gene.name == "ENSG00000148400"
+    assert transcript.gene.symbol == "NOTCH1"
 
 
-def test_record_model_from_record(mocker: MockerFixture) -> None:
-    """Test that linked Record fields are converted to names."""
-    linked_record = mocker.MagicMock(spec=Record)
-    linked_record.get_name.return_value = MOCK_LINKED_RECORD_NAME
+@pytest.mark.requires_latch_registry
+def test_skip_linked_record_online() -> None:
+    """Test that we can skip linked records not defined on the parent model."""
 
-    mock_record = mocker.MagicMock(spec=Record)
-    mock_record.get_values.return_value = {
-        "field_str": "value",
-        "field_int": 42,
-        "field_linked_record": linked_record,
-    }
-    mock_record.get_name.return_value = MOCK_RECORD_1_NAME
-    mock_record.id = MOCK_RECORD_1_ID
+    class Transcript(LatchRecordModel):
+        """Represent a record from the Transcript table."""
 
-    model_instance = TestRecordModel.from_record(mock_record)
+        shortname: str
 
-    assert model_instance.name == MOCK_RECORD_1_NAME
-    assert model_instance.id == MOCK_RECORD_1_ID
-    assert model_instance.field_str == "value"
-    assert model_instance.field_int == 42
-    assert model_instance.field_linked_record == MOCK_LINKED_RECORD_NAME
+    transcript_table_id = "12146"
+    transcript_record_name = "ENST00000651671.1"
+
+    records = query_latch_records_by_name(transcript_record_name, table_id=transcript_table_id)
+    assert len(records) == 1
+
+    record = records[transcript_record_name]
+    transcript = Transcript.from_record(record, table_id=transcript_table_id)
+
+    assert transcript.name == transcript_record_name
+    assert transcript.shortname == "NOTCH1-204"
