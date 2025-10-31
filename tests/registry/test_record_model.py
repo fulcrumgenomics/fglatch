@@ -104,8 +104,41 @@ def test_linked_record_online() -> None:
 
     assert transcript.name == transcript_record_name
     assert transcript.shortname == "NOTCH1-204"
+
     assert isinstance(transcript.gene, LatchRecordModel)
     assert transcript.gene.name == "ENSG00000148400"
+
+
+@pytest.mark.requires_latch_registry
+def test_linked_record_online_nested_model() -> None:
+    """Test that we can load a linked record."""
+
+    class Gene(LatchRecordModel):
+        """Represent a record from the Gene table."""
+
+        symbol: str
+
+    class Transcript(LatchRecordModel):
+        """Represent a record from the Transcript table."""
+
+        shortname: str
+        gene: Gene
+
+    transcript_table_id = "12146"
+    transcript_record_name = "ENST00000651671.1"
+
+    records = query_latch_records_by_name(transcript_record_name, table_id=transcript_table_id)
+    assert len(records) == 1
+
+    record = records[transcript_record_name]
+    transcript = Transcript.from_record(record, table_id=transcript_table_id)
+
+    assert transcript.name == transcript_record_name
+    assert transcript.shortname == "NOTCH1-204"
+
+    assert isinstance(transcript.gene, Gene)
+    assert transcript.gene.name == "ENSG00000148400"
+    assert transcript.gene.symbol == "NOTCH1"
 
 
 @pytest.mark.requires_latch_registry
