@@ -77,7 +77,7 @@ class LatchRecordModel(BaseModel):
         # `LatchRecordModel` instances.
         for key, value in values.items():
             if isinstance(value, Record):
-                values[key] = LatchRecordModel.from_record(value)
+                values[key] = LatchRecordModel(id=value.id, name=value.get_name())
 
         # The record's name and ID are not included in the dictionary returned by
         # `Record.get_values()`, and they must be added manually.
