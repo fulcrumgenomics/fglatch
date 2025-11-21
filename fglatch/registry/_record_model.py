@@ -21,6 +21,9 @@ class LatchRecordModel(BaseModel):
     Subclasses must define the `table_id` class variable to specify the source Registry table. The
     table's display name is automatically resolved from the table ID.
 
+    Linked records are represented by a base `LatchRecordModel` instance containing only the `id`
+    and `name` fields of the linked record.
+
     Examples:
         Define a model for a specific Registry table:
 
@@ -69,6 +72,12 @@ class LatchRecordModel(BaseModel):
 
         # Convert a Record to a dictionary.
         values: dict[str, Any] = record.get_values()
+
+        # Linked Record values are returned as Record objects, here we convert them to base
+        # `LatchRecordModel` instances.
+        for key, value in values.items():
+            if isinstance(value, Record):
+                values[key] = LatchRecordModel(id=value.id, name=value.get_name())
 
         # The record's name and ID are not included in the dictionary returned by
         # `Record.get_values()`, and they must be added manually.
