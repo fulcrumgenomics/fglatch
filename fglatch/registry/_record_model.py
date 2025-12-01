@@ -54,6 +54,13 @@ class LatchRecordModel(BaseModel):
         Extracts values from the provided Record, adds the record's name and ID, and validates the
         data against the model schema.
 
+        Linked records are optionally recursively validated against nested models.
+        - To validate a linked record without recursive validation, declare the field as a
+        `LatchRecordModel`. The record will be returned as a base `LatchRecordModel`, capturing only
+        the record's ID and name.
+        - To validate a linked record recursively, declare the field as a nested model. Subclass
+        `LatchRecordModel` and define a model for the linked table.
+
         Args:
             record: A record retrieved from a Latch Registry table via the SDK.
             table_id: An optional table ID to check the record against.
@@ -73,11 +80,20 @@ class LatchRecordModel(BaseModel):
         # Convert a Record to a dictionary.
         values: dict[str, Any] = record.get_values()
 
-        # Linked Record values are returned as Record objects, here we convert them to base
+        # Linked Record values are returned by the SDK as Record objects, here we convert them to
         # `LatchRecordModel` instances.
         for key, value in values.items():
+            field_info = cls.model_fields[key]
+            field_type = field_info.annotation
+
             if isinstance(value, Record):
-                values[key] = LatchRecordModel(id=value.id, name=value.get_name())
+                if issubclass(field_type, LatchRecordModel) and field_type is not LatchRecordModel:
+                    # If the field was declared as a subclass of LatchRecordModel, recursively
+                    # validate it using the nested model.
+                    values[key] = field_type.from_record(record)
+                else:
+                    # Otherwise, return it as a base LatchRecordModel
+                    values[key] = LatchRecordModel(id=value.id, name=value.get_name())
 
         # The record's name and ID are not included in the dictionary returned by
         # `Record.get_values()`, and they must be added manually.
