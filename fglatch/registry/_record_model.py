@@ -87,10 +87,14 @@ class LatchRecordModel(BaseModel):
             field_type = field_info.annotation
 
             if isinstance(value, Record):
-                if issubclass(field_type, LatchRecordModel) and field_type is not LatchRecordModel:
+                if (
+                    field_type is not None
+                    and issubclass(field_type, LatchRecordModel)
+                    and field_type is not LatchRecordModel
+                ):
                     # If the field was declared as a subclass of LatchRecordModel, recursively
                     # validate it using the nested model.
-                    values[key] = field_type.from_record(record)
+                    values[key] = field_type.from_record(value)
                 else:
                     # Otherwise, return it as a base LatchRecordModel
                     values[key] = LatchRecordModel(id=value.id, name=value.get_name())
