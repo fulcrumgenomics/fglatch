@@ -2,6 +2,9 @@ import pytest
 from latch.registry.record import Record
 from latch.registry.table import Table
 from latch.registry.table import TableNotFoundError
+from latch.registry.types import EmptyCell
+from latch.registry.types import InvalidValue
+from pydantic import ValidationError
 from pytest_mock import MockerFixture
 
 from fglatch.registry import LatchRecordModel
@@ -128,3 +131,86 @@ def test_skip_linked_record_online() -> None:
 
     assert transcript.name == transcript_record_name
     assert transcript.shortname == "NOTCH1-204"
+
+
+def test_from_record_remove_empty_values(
+    mocker: MockerFixture, caplog: pytest.LogCaptureFixture
+) -> None:
+    """EmptyCell values should be dropped and a warning logged when remove_empty_values=True."""
+    import logging
+
+    class SampleRecord(LatchRecordModel):
+        sample_name: str
+        concentration: float | None = None
+
+    mock_record = mocker.MagicMock(spec=Record)
+    mock_record.id = "42"
+    mock_record.get_name.return_value = "sample_001"
+    mock_record.get_values.return_value = {
+        "sample_name": "my_sample",
+        "concentration": mocker.MagicMock(spec=EmptyCell),
+    }
+
+    with caplog.at_level(logging.WARNING, logger="fglatch.registry._record_model"):
+        result = SampleRecord.from_record(mock_record, remove_empty_values=True)
+
+    assert result.id == "42"
+    assert result.name == "sample_001"
+    assert result.sample_name == "my_sample"
+    assert result.concentration is None
+    assert any("concentration" in msg for msg in caplog.messages)
+    assert any("Empty value" in msg for msg in caplog.messages)
+
+
+def test_from_record_remove_invalid_values(
+    mocker: MockerFixture, caplog: pytest.LogCaptureFixture
+) -> None:
+    """InvalidValue values should be dropped and a warning logged if remove_invalid_values=True."""
+    import logging
+
+    class SampleRecord(LatchRecordModel):
+        sample_name: str
+        concentration: float | None = None
+
+    mock_invalid = mocker.MagicMock(spec=InvalidValue)
+    mock_invalid.raw_value = "not_a_float"
+
+    mock_record = mocker.MagicMock(spec=Record)
+    mock_record.id = "42"
+    mock_record.get_name.return_value = "sample_001"
+    mock_record.get_values.return_value = {
+        "sample_name": "my_sample",
+        "concentration": mock_invalid,
+    }
+
+    with caplog.at_level(logging.WARNING, logger="fglatch.registry._record_model"):
+        result = SampleRecord.from_record(mock_record, remove_invalid_values=True)
+
+    assert result.id == "42"
+    assert result.name == "sample_001"
+    assert result.sample_name == "my_sample"
+    assert result.concentration is None
+    assert any("concentration" in msg for msg in caplog.messages)
+    assert any("Invalid value" in msg for msg in caplog.messages)
+
+
+@pytest.mark.requires_latch_registry
+def test_from_record_remove_empty_values_raises_online() -> None:
+    """Removing an EmptyCell for a required field should raise a ValidationError."""
+
+    class Transcript(LatchRecordModel):
+        """Represent a record from the Transcript table."""
+
+        shortname: str
+        gene: LatchRecordModel
+
+    transcript_table_id = "12146"
+    transcript_record_name = "ENST00000123456.1"
+
+    records = query_latch_records_by_name(transcript_record_name, table_id=transcript_table_id)
+    assert len(records) == 1
+
+    record = records[transcript_record_name]
+
+    with pytest.raises(ValidationError):
+        Transcript.from_record(record, table_id=transcript_table_id, remove_empty_values=True)

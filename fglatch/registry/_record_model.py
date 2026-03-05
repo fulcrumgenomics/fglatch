@@ -1,10 +1,15 @@
+import logging
 from typing import Any
 from typing import Self
 
 from latch.registry.record import Record
 from latch.registry.table import Table
 from latch.registry.table import TableNotFoundError
+from latch.registry.types import EmptyCell
+from latch.registry.types import InvalidValue
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 class LatchRecordModel(BaseModel):
@@ -47,7 +52,13 @@ class LatchRecordModel(BaseModel):
     name: str
 
     @classmethod
-    def from_record(cls, record: Record, table_id: str | None = None) -> Self:
+    def from_record(
+        cls,
+        record: Record,
+        table_id: str | None = None,
+        remove_empty_values: bool = False,
+        remove_invalid_values: bool = False,
+    ) -> Self:
         """
         Create a validated model instance from a Latch Registry Record.
 
@@ -57,6 +68,8 @@ class LatchRecordModel(BaseModel):
         Args:
             record: A record retrieved from a Latch Registry table via the SDK.
             table_id: An optional table ID to check the record against.
+            remove_empty_values: Removes record attributes with value `EmptyCell`.
+            remove_invalid_values: Removes record attributes with value `InvalidValue`.
 
         Returns:
             A validated instance of the model with all field data populated.
@@ -73,16 +86,33 @@ class LatchRecordModel(BaseModel):
         # Convert a Record to a dictionary.
         values: dict[str, Any] = record.get_values()
 
-        # Linked Record values are returned as Record objects, here we convert them to base
-        # `LatchRecordModel` instances.
-        for key, value in values.items():
-            if isinstance(value, Record):
-                values[key] = LatchRecordModel(id=value.id, name=value.get_name())
-
         # The record's name and ID are not included in the dictionary returned by
         # `Record.get_values()`, and they must be added manually.
         values["name"] = record.get_name()
         values["id"] = record.id
+
+        keys_to_remove: list[str] = []
+        for key, value in values.items():
+            if isinstance(value, Record):
+                # Linked Record values are returned as Record objects, here we convert them to base
+                # `LatchRecordModel` instances.
+                values[key] = LatchRecordModel(id=value.id, name=value.get_name())
+            elif isinstance(value, InvalidValue) and remove_invalid_values:
+                raw_value = value.raw_value
+                logger.warning(
+                    f"Invalid value for key '{key}' in record '{values['name']}': '{raw_value}'. "
+                    "The value will be removed from the record."
+                )
+                keys_to_remove.append(key)
+            elif isinstance(value, EmptyCell) and remove_empty_values:
+                logger.warning(
+                    f"Empty value for key '{key}' in record '{values['name']}': '{value}'. "
+                    "The value will be removed from the record."
+                )
+                keys_to_remove.append(key)
+
+        for key in keys_to_remove:
+            del values[key]
 
         return cls.model_validate(values)
 
