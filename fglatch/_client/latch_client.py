@@ -6,18 +6,18 @@ from typing import cast
 from latch.utils import current_workspace
 from latch.utils import retrieve_or_login
 from latch_sdk_config.latch import config
+from pyrate_limiter import Duration
+from pyrate_limiter import Limiter
+from pyrate_limiter import Rate
 from requests import Session
-from requests_ratelimiter import Duration
-from requests_ratelimiter import Limiter
 from requests_ratelimiter import LimiterSession
-from requests_ratelimiter import RequestRate
 
 from fglatch._client.models import Execution
 from fglatch._client.models import ListedExecutions
 from fglatch.type_aliases import ExecutionIdAsString
 from fglatch.type_aliases._type_aliases import LatchWorkspaceId
 
-LATCH_API_RATE: RequestRate = RequestRate(limit=10, interval=Duration.SECOND * 1)
+LATCH_API_RATE: Rate = Rate(limit=10, interval=Duration.SECOND)
 """
 The self-imposed rate limit for Latch API requests.
 
