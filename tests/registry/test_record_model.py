@@ -138,7 +138,7 @@ def test_skip_linked_record_online() -> None:
 def test_from_record_exclude_empty_values(
     mocker: MockerFixture, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """EmptyCell values should be dropped and a warning logged when remove_empty_values=True."""
+    """EmptyCell values should be dropped and a warning logged when exclude_empty_values=True."""
 
     class SampleRecord(LatchRecordModel):
         sample_name: str
@@ -159,14 +159,13 @@ def test_from_record_exclude_empty_values(
     assert result.name == "sample_001"
     assert result.sample_name == "my_sample"
     assert result.concentration is None
-    assert any("concentration" in msg for msg in caplog.messages)
-    assert any("Empty cells found" in msg for msg in caplog.messages)
+    assert any("Empty cells found in record 'sample_001' for fields:\n\nconcentration")
 
 
 def test_from_record_exclude_invalid_values(
     mocker: MockerFixture, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """InvalidValue values should be dropped and a warning logged if remove_invalid_values=True."""
+    """InvalidValue values should be dropped and a warning logged if exclude_invalid_values=True."""
 
     class SampleRecord(LatchRecordModel):
         sample_name: str
@@ -190,8 +189,110 @@ def test_from_record_exclude_invalid_values(
     assert result.name == "sample_001"
     assert result.sample_name == "my_sample"
     assert result.concentration is None
-    assert any("concentration" in msg for msg in caplog.messages)
-    assert any("Invalid values found" in msg for msg in caplog.messages)
+    assert any(
+        "Invalid values found in record 'sample_001' for fields:\n\nconcentration: not_a_float"
+        in msg
+        for msg in caplog.messages
+    )
+
+
+def test_from_record_exclude_invalid_values_and_empty_cells(
+    mocker: MockerFixture, caplog: pytest.LogCaptureFixture
+) -> None:
+    """
+    InvalidValue values should be dropped and a warning logged if exclude_invalid_values=True.
+
+    EmptyCell values should be dropped and a warning logged when exclude_empty_values=True.
+    """
+
+    class SampleRecord(LatchRecordModel):
+        sample_name: str
+        concentration: float | None = None
+        experiment_id: str | None = None
+
+    mock_invalid = mocker.MagicMock(spec=InvalidValue)
+    mock_invalid.raw_value = "not_a_float"
+
+    mock_record = mocker.MagicMock(spec=Record)
+    mock_record.id = "42"
+    mock_record.get_name.return_value = "sample_001"
+    mock_record.get_values.return_value = {
+        "sample_name": "my_sample",
+        "concentration": mock_invalid,
+        "experiment_id": mocker.MagicMock(spec=EmptyCell),
+    }
+
+    with caplog.at_level(logging.WARNING, logger="fglatch.registry._record_model"):
+        result = SampleRecord.from_record(
+            mock_record, exclude_invalid_values=True, exclude_empty_values=True
+        )
+
+    assert result.id == "42"
+    assert result.name == "sample_001"
+    assert result.sample_name == "my_sample"
+    assert result.concentration is None
+    assert result.experiment_id is None
+    assert any(
+        "Invalid values found in record 'sample_001' for fields:\n\nconcentration: not_a_float"
+        in msg
+        for msg in caplog.messages
+    )
+    assert any("Empty cells found in record 'sample_001' for fields:\n\nexperiment_id")
+
+
+def test_from_record_invalid_value_raises_error(mocker: MockerFixture) -> None:
+    """InvalidValue values should raise an error if exclude_invalid_values=False."""
+
+    class SampleRecord(LatchRecordModel):
+        sample_name: str
+        concentration: float | None = None
+
+    mock_invalid = mocker.MagicMock(spec=InvalidValue)
+    mock_invalid.raw_value = "not_a_float"
+
+    mock_record = mocker.MagicMock(spec=Record)
+    mock_record.id = "42"
+    mock_record.get_name.return_value = "sample_001"
+    mock_record.get_values.return_value = {
+        "sample_name": "my_sample",
+        "concentration": mock_invalid,
+    }
+
+    with pytest.raises(
+        ValidationError,
+        match=(
+            "1 validation error for SampleRecord\nconcentration\n  Input should be a valid number"
+        ),
+    ):
+        SampleRecord.from_record(
+            mock_record, exclude_invalid_values=False, exclude_empty_values=False
+        )
+
+
+def test_from_record_empty_value_raises_error(mocker: MockerFixture) -> None:
+    """InvalidValue values should raise an error if exclude_empty_values=False."""
+
+    class SampleRecord(LatchRecordModel):
+        sample_name: str
+        concentration: float | None = None
+
+    mock_record = mocker.MagicMock(spec=Record)
+    mock_record.id = "42"
+    mock_record.get_name.return_value = "sample_001"
+    mock_record.get_values.return_value = {
+        "sample_name": "my_sample",
+        "concentration": mocker.MagicMock(spec=EmptyCell),
+    }
+
+    with pytest.raises(
+        ValidationError,
+        match=(
+            "1 validation error for SampleRecord\nconcentration\n  Input should be a valid number"
+        ),
+    ):
+        SampleRecord.from_record(
+            mock_record, exclude_invalid_values=False, exclude_empty_values=False
+        )
 
 
 @pytest.mark.requires_latch_registry
