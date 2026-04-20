@@ -84,12 +84,8 @@ class LatchRecordModel(BaseModel):
             _validate_source_table(record, table_id)
 
         # Convert a Record to a dictionary.
+        record_name: str = record.get_name()
         values: dict[str, Any] = record.get_values()
-
-        # The record's name and ID are not included in the dictionary returned by
-        # `Record.get_values()`, and they must be added manually.
-        values["name"] = record.get_name()
-        values["id"] = record.id
 
         keys_to_remove: list[str] = []
         for key, value in values.items():
@@ -100,19 +96,24 @@ class LatchRecordModel(BaseModel):
             elif isinstance(value, InvalidValue) and remove_invalid_values:
                 raw_value = value.raw_value
                 logger.warning(
-                    f"Invalid value for key '{key}' in record '{values['name']}': '{raw_value}'. "
+                    f"Invalid value for key '{key}' in record '{record_name}': '{raw_value}'. "
                     "The value will be removed from the record."
                 )
                 keys_to_remove.append(key)
             elif isinstance(value, EmptyCell) and remove_empty_values:
                 logger.warning(
-                    f"Empty value for key '{key}' in record '{values['name']}': '{value}'. "
+                    f"Empty value for key '{key}' in record '{record_name}': '{value}'. "
                     "The value will be removed from the record."
                 )
                 keys_to_remove.append(key)
 
         for key in keys_to_remove:
             del values[key]
+
+        # The record's name and ID are not included in the dictionary returned by
+        # `Record.get_values()`, and they must be added manually.
+        values["name"] = record_name
+        values["id"] = record.id
 
         return cls.model_validate(values)
 
