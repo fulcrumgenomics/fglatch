@@ -52,12 +52,12 @@ class LatchRecordModel(BaseModel):
     name: str
 
     @classmethod
-    def from_record(
+    def from_record(  # noqa: C901
         cls,
         record: Record,
         table_id: str | None = None,
-        remove_empty_values: bool = False,
-        remove_invalid_values: bool = False,
+        exclude_empty_values: bool = False,
+        exclude_invalid_values: bool = False,
     ) -> Self:
         """
         Create a validated model instance from a Latch Registry Record.
@@ -68,8 +68,10 @@ class LatchRecordModel(BaseModel):
         Args:
             record: A record retrieved from a Latch Registry table via the SDK.
             table_id: An optional table ID to check the record against.
-            remove_empty_values: Removes record attributes with value `EmptyCell`.
-            remove_invalid_values: Removes record attributes with value `InvalidValue`.
+            exclude_invalid_values: If True, record attributes with value `InvalidValue` are
+                excluded prior to validation and a warning is logged.
+            exclude_empty_values: If True, record attributes with value `EmptyCell` are excluded
+                prior to validation and a warning is logged.
 
         Returns:
             A validated instance of the model with all field data populated.
@@ -87,35 +89,51 @@ class LatchRecordModel(BaseModel):
         record_name: str = record.get_name()
         values: dict[str, Any] = record.get_values()
 
-        keys_to_remove: list[str] = []
+        # Check for any InvalidValue or EmptyCell values
+        keys_with_invalid_values: dict[str, Any] = {}
+        keys_with_empty_cells: list[str] = []
         for key, value in values.items():
+            if isinstance(value, InvalidValue):
+                keys_with_invalid_values[key] = value.raw_value
+            elif isinstance(value, EmptyCell):
+                keys_with_empty_cells.append(key)
+
+        if len(keys_with_invalid_values) > 0:
+            invalid_value_fields: str = "\n".join(
+                f"{key}: {value}" for key, value in keys_with_invalid_values.items()
+            )
+            logger.warning(
+                f"Invalid values found in record '{record_name}' for fields:\n\n"
+                f"{invalid_value_fields}"
+            )
+
+        if len(keys_with_empty_cells) > 0:
+            empty_cell_fields: str = "\n".join(keys_with_empty_cells)
+            logger.warning(
+                f"Empty cells found in record '{record_name}' for fields:\n\n{empty_cell_fields}"
+            )
+
+        # Make a copy of the key/value pairs, excluding any that
+        out_values: dict[str, Any] = {}
+        for key, value in values.items():
+            if key in keys_with_invalid_values and exclude_invalid_values:
+                continue
+            if key in keys_with_empty_cells and exclude_empty_values:
+                continue
+
             if isinstance(value, Record):
                 # Linked Record values are returned as Record objects, here we convert them to base
                 # `LatchRecordModel` instances.
-                values[key] = LatchRecordModel(id=value.id, name=value.get_name())
-            elif isinstance(value, InvalidValue) and remove_invalid_values:
-                raw_value = value.raw_value
-                logger.warning(
-                    f"Invalid value for key '{key}' in record '{record_name}': '{raw_value}'. "
-                    "The value will be removed from the record."
-                )
-                keys_to_remove.append(key)
-            elif isinstance(value, EmptyCell) and remove_empty_values:
-                logger.warning(
-                    f"Empty value for key '{key}' in record '{record_name}': '{value}'. "
-                    "The value will be removed from the record."
-                )
-                keys_to_remove.append(key)
-
-        for key in keys_to_remove:
-            del values[key]
+                out_values[key] = LatchRecordModel(id=value.id, name=value.get_name())
+            else:
+                out_values[key] = value
 
         # The record's name and ID are not included in the dictionary returned by
         # `Record.get_values()`, and they must be added manually.
-        values["name"] = record_name
-        values["id"] = record.id
+        out_values["name"] = record_name
+        out_values["id"] = record.id
 
-        return cls.model_validate(values)
+        return cls.model_validate(out_values)
 
 
 def _safe_table_name(table_id: str) -> str | None:

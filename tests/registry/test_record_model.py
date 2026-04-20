@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 from latch.registry.record import Record
 from latch.registry.table import Table
@@ -133,11 +135,10 @@ def test_skip_linked_record_online() -> None:
     assert transcript.shortname == "NOTCH1-204"
 
 
-def test_from_record_remove_empty_values(
+def test_from_record_exclude_empty_values(
     mocker: MockerFixture, caplog: pytest.LogCaptureFixture
 ) -> None:
     """EmptyCell values should be dropped and a warning logged when remove_empty_values=True."""
-    import logging
 
     class SampleRecord(LatchRecordModel):
         sample_name: str
@@ -152,21 +153,20 @@ def test_from_record_remove_empty_values(
     }
 
     with caplog.at_level(logging.WARNING, logger="fglatch.registry._record_model"):
-        result = SampleRecord.from_record(mock_record, remove_empty_values=True)
+        result = SampleRecord.from_record(mock_record, exclude_empty_values=True)
 
     assert result.id == "42"
     assert result.name == "sample_001"
     assert result.sample_name == "my_sample"
     assert result.concentration is None
     assert any("concentration" in msg for msg in caplog.messages)
-    assert any("Empty value" in msg for msg in caplog.messages)
+    assert any("Empty cells found" in msg for msg in caplog.messages)
 
 
-def test_from_record_remove_invalid_values(
+def test_from_record_exclude_invalid_values(
     mocker: MockerFixture, caplog: pytest.LogCaptureFixture
 ) -> None:
     """InvalidValue values should be dropped and a warning logged if remove_invalid_values=True."""
-    import logging
 
     class SampleRecord(LatchRecordModel):
         sample_name: str
@@ -184,18 +184,18 @@ def test_from_record_remove_invalid_values(
     }
 
     with caplog.at_level(logging.WARNING, logger="fglatch.registry._record_model"):
-        result = SampleRecord.from_record(mock_record, remove_invalid_values=True)
+        result = SampleRecord.from_record(mock_record, exclude_invalid_values=True)
 
     assert result.id == "42"
     assert result.name == "sample_001"
     assert result.sample_name == "my_sample"
     assert result.concentration is None
     assert any("concentration" in msg for msg in caplog.messages)
-    assert any("Invalid value" in msg for msg in caplog.messages)
+    assert any("Invalid values found" in msg for msg in caplog.messages)
 
 
 @pytest.mark.requires_latch_registry
-def test_from_record_remove_empty_values_raises_online() -> None:
+def test_from_record_exclude_empty_values_raises_online() -> None:
     """Removing an EmptyCell for a required field should raise a ValidationError."""
 
     class Transcript(LatchRecordModel):
@@ -213,4 +213,4 @@ def test_from_record_remove_empty_values_raises_online() -> None:
     record = records[transcript_record_name]
 
     with pytest.raises(ValidationError):
-        Transcript.from_record(record, table_id=transcript_table_id, remove_empty_values=True)
+        Transcript.from_record(record, table_id=transcript_table_id, exclude_empty_values=True)
