@@ -89,14 +89,26 @@ class LatchRecordModel(BaseModel):
         record_name: str = record.get_name()
         values: dict[str, Any] = record.get_values()
 
-        # Check for any InvalidValue or EmptyCell values
+        # Check for any InvalidValue or EmptyCell values, and make a copy of the key/value pairs,
+        # excluding any that ought to be removed.
+        out_values: dict[str, Any] = {}
         keys_with_invalid_values: dict[str, Any] = {}
         keys_with_empty_cells: list[str] = []
         for key, value in values.items():
             if isinstance(value, InvalidValue):
                 keys_with_invalid_values[key] = value.raw_value
+                if not exclude_invalid_values:
+                    out_values[key] = value
             elif isinstance(value, EmptyCell):
                 keys_with_empty_cells.append(key)
+                if not exclude_empty_values:
+                    out_values[key] = value
+            elif isinstance(value, Record):
+                # Linked Record values are returned as Record objects, here we convert them to base
+                # `LatchRecordModel` instances.
+                out_values[key] = LatchRecordModel(id=value.id, name=value.get_name())
+            else:
+                out_values[key] = value
 
         if len(keys_with_invalid_values) > 0:
             invalid_value_fields: str = "\n".join(
@@ -112,21 +124,6 @@ class LatchRecordModel(BaseModel):
             logger.warning(
                 f"Empty cells found in record '{record_name}' for fields:\n\n{empty_cell_fields}"
             )
-
-        # Make a copy of the key/value pairs, excluding any that
-        out_values: dict[str, Any] = {}
-        for key, value in values.items():
-            if key in keys_with_invalid_values and exclude_invalid_values:
-                continue
-            if key in keys_with_empty_cells and exclude_empty_values:
-                continue
-
-            if isinstance(value, Record):
-                # Linked Record values are returned as Record objects, here we convert them to base
-                # `LatchRecordModel` instances.
-                out_values[key] = LatchRecordModel(id=value.id, name=value.get_name())
-            else:
-                out_values[key] = value
 
         # The record's name and ID are not included in the dictionary returned by
         # `Record.get_values()`, and they must be added manually.
