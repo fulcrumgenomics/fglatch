@@ -1,10 +1,15 @@
+import logging
 from typing import Any
 from typing import Self
 
 from latch.registry.record import Record
 from latch.registry.table import Table
 from latch.registry.table import TableNotFoundError
+from latch.registry.types import EmptyCell
+from latch.registry.types import InvalidValue
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 class LatchRecordModel(BaseModel):
@@ -47,7 +52,13 @@ class LatchRecordModel(BaseModel):
     name: str
 
     @classmethod
-    def from_record(cls, record: Record, table_id: str | None = None) -> Self:
+    def from_record(
+        cls,
+        record: Record,
+        table_id: str | None = None,
+        exclude_empty_values: bool = False,
+        exclude_invalid_values: bool = False,
+    ) -> Self:
         """
         Create a validated model instance from a Latch Registry Record.
 
@@ -57,6 +68,10 @@ class LatchRecordModel(BaseModel):
         Args:
             record: A record retrieved from a Latch Registry table via the SDK.
             table_id: An optional table ID to check the record against.
+            exclude_empty_values: If True, record attributes with value `EmptyCell` are excluded
+                prior to validation and a warning is logged.
+            exclude_invalid_values: If True, record attributes with value `InvalidValue` are
+                excluded prior to validation and a warning is logged.
 
         Returns:
             A validated instance of the model with all field data populated.
@@ -71,20 +86,39 @@ class LatchRecordModel(BaseModel):
             _validate_source_table(record, table_id)
 
         # Convert a Record to a dictionary.
-        values: dict[str, Any] = record.get_values()
+        record_name: str = record.get_name()
+        converted_values, invalid_values, empty_cells = _classify_record_values(record.get_values())
 
-        # Linked Record values are returned as Record objects, here we convert them to base
-        # `LatchRecordModel` instances.
-        for key, value in values.items():
-            if isinstance(value, Record):
-                values[key] = LatchRecordModel(id=value.id, name=value.get_name())
+        if len(invalid_values) > 0:
+            invalid_value_fields: str = "\n".join(
+                f"{key}: {value}" for key, value in invalid_values.items()
+            )
+            logger.warning(
+                f"Invalid values found in record '{record_name}' for fields:\n\n"
+                f"{invalid_value_fields}"
+            )
+
+        if len(empty_cells) > 0:
+            empty_cell_fields: str = "\n".join(empty_cells)
+            logger.warning(
+                f"Empty cells found in record '{record_name}' for fields:\n\n{empty_cell_fields}"
+            )
+
+        # Check for any InvalidValue or EmptyCell values, and make a copy of the key/value pairs,
+        # excluding any that ought to be removed.
+        out_values: dict[str, Any] = {
+            key: value
+            for key, value in converted_values.items()
+            if not (exclude_invalid_values and key in invalid_values)
+            and not (exclude_empty_values and key in empty_cells)
+        }
 
         # The record's name and ID are not included in the dictionary returned by
         # `Record.get_values()`, and they must be added manually.
-        values["name"] = record.get_name()
-        values["id"] = record.id
+        out_values["name"] = record_name
+        out_values["id"] = record.id
 
-        return cls.model_validate(values)
+        return cls.model_validate(out_values)
 
 
 def _safe_table_name(table_id: str) -> str | None:
@@ -129,3 +163,39 @@ def _validate_source_table(record: Record, table_id: str) -> None:
             f"Record {record.get_name()} (id={record.id}) originated from "
             f"table {record_table_name} (id={record_table_id})."
         )
+
+
+def _classify_record_values(
+    values: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
+    """
+    Classify record values into converted values, invalid raw values, and empty-cell keys.
+
+    Args:
+      values: A dictionary mapping keys to values from a LatchRecord.
+
+    Returns:
+        A tuple of (converted, invalid, empty), where:
+            - `converted` contains all record values, with linked `Record` instances replaced by
+            base `LatchRecordModel` instances. `InvalidValue` and `EmptyCell` sentinels are
+            preserved as-is so the caller can decide whether to exclude them.
+            - `invalid` records the raw value for each `InvalidValue` encountered.
+            - `empty` lists the keys that mapped to an `EmptyCell`.
+    """
+    converted: dict[str, Any] = {}
+    invalid: dict[str, Any] = {}
+    empty: list[str] = []
+
+    for key, value in values.items():
+        if isinstance(value, InvalidValue):
+            invalid[key] = value.raw_value
+            converted[key] = value
+        elif isinstance(value, EmptyCell):
+            empty.append(key)
+            converted[key] = value
+        elif isinstance(value, Record):
+            converted[key] = LatchRecordModel(id=value.id, name=value.get_name())
+        else:
+            converted[key] = value
+
+    return converted, invalid, empty
