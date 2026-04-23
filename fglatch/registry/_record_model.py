@@ -52,7 +52,7 @@ class LatchRecordModel(BaseModel):
     name: str
 
     @classmethod
-    def from_record(  # noqa: C901
+    def from_record(
         cls,
         record: Record,
         table_id: str | None = None,
