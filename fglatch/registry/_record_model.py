@@ -169,20 +169,18 @@ def _classify_record_values(
     values: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
     """
-    Convert any raw record values required, and record invalid-value and empty-cell values.
-
-    Conversions
-    -----------
-    Linked `Record` instances in `converted_values` are replaced with base `LatchRecordModel`
-    instances.
+    Classify record values into converted values, invalid raw values, and empty-cell keys.
 
     Args:
       values: A dictionary mapping keys to values from a LatchRecord.
 
     Returns:
-        A tuple of (converted_values, invalid_raw_values_by_key, empty_cell_keys). `InvalidValue`
-        and `EmptyCell` sentinels are preserved in `converted_values` so the caller can decide
-        whether to exclude them.
+        A tuple of (converted, invalid, empty), where:
+            - `converted` contains all record values, with linked `Record` instances replaced by
+            base `LatchRecordModel` instances. `InvalidValue` and `EmptyCell` sentinels are
+            preserved as-is so the caller can decide whether to exclude them.
+            - `invalid` records the raw value for each `InvalidValue` encountered.
+            - `empty` lists the keys that mapped to an `EmptyCell`.
     """
     converted: dict[str, Any] = {}
     invalid: dict[str, Any] = {}
