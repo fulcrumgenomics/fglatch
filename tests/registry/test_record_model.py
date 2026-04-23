@@ -159,7 +159,9 @@ def test_from_record_exclude_empty_values(
     assert result.name == "sample_001"
     assert result.sample_name == "my_sample"
     assert result.concentration is None
-    assert any("Empty cells found in record 'sample_001' for fields:\n\nconcentration")
+
+    expected_warning: str = "Empty cells found in record 'sample_001' for fields:\n\nconcentration"
+    assert any(expected_warning in msg for msg in caplog.messages)
 
 
 def test_from_record_exclude_invalid_values(
@@ -189,11 +191,11 @@ def test_from_record_exclude_invalid_values(
     assert result.name == "sample_001"
     assert result.sample_name == "my_sample"
     assert result.concentration is None
-    assert any(
+
+    expected_warning: str = (
         "Invalid values found in record 'sample_001' for fields:\n\nconcentration: not_a_float"
-        in msg
-        for msg in caplog.messages
     )
+    assert any(expected_warning in msg for msg in caplog.messages)
 
 
 def test_from_record_exclude_invalid_values_and_empty_cells(
@@ -232,12 +234,15 @@ def test_from_record_exclude_invalid_values_and_empty_cells(
     assert result.sample_name == "my_sample"
     assert result.concentration is None
     assert result.experiment_id is None
-    assert any(
+
+    expected_invalid_value_warning: str = (
         "Invalid values found in record 'sample_001' for fields:\n\nconcentration: not_a_float"
-        in msg
-        for msg in caplog.messages
     )
-    assert any("Empty cells found in record 'sample_001' for fields:\n\nexperiment_id")
+    expected_empty_cell_warning: str = (
+        "Empty cells found in record 'sample_001' for fields:\n\nexperiment_id"
+    )
+    assert any(expected_invalid_value_warning in msg for msg in caplog.messages)
+    assert any(expected_empty_cell_warning in msg for msg in caplog.messages)
 
 
 def test_from_record_invalid_value_raises_error(mocker: MockerFixture) -> None:
