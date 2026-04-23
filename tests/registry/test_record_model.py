@@ -277,7 +277,7 @@ def test_from_record_invalid_value_raises_error(mocker: MockerFixture) -> None:
 
 
 def test_from_record_empty_value_raises_error(mocker: MockerFixture) -> None:
-    """InvalidValue values should raise an error if exclude_empty_values=False."""
+    """EmptyCell values should raise an error if exclude_empty_values=False."""
 
     class SampleRecord(LatchRecordModel):
         sample_name: str
