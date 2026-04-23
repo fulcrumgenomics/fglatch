@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 import pytest
 from latch.registry.record import Record
@@ -11,6 +12,7 @@ from pytest_mock import MockerFixture
 
 from fglatch.registry import LatchRecordModel
 from fglatch.registry import query_latch_records_by_name
+from fglatch.registry._record_model import _classify_record_values
 from fglatch.registry._record_model import _safe_table_name
 from fglatch.registry._record_model import _validate_source_table
 from tests.constants import MOCK_RECORD_1_ID
@@ -320,3 +322,38 @@ def test_from_record_exclude_empty_values_raises_online() -> None:
 
     with pytest.raises(ValidationError):
         Transcript.from_record(record, table_id=transcript_table_id, exclude_empty_values=True)
+
+
+def test_classify_record_values(mocker: MockerFixture) -> None:
+    """Test that record values are correctly converted and classified."""
+    mock_linked_record = mocker.MagicMock(spec=Record)
+    mock_linked_record.get_table_id.return_value = "1234"
+    mock_linked_record.id = "123"
+    mock_linked_record.get_name.return_value = "DNA123/seq_abc"
+
+    mock_invalid = mocker.MagicMock(spec=InvalidValue)
+    mock_invalid.raw_value = "not_a_float"
+
+    mock_empty_cell = mocker.MagicMock(spec=EmptyCell)
+
+    values: dict[str, Any] = {
+        "sample_name": "my_sample",
+        "concentration": mock_invalid,
+        "experiment_id": mock_empty_cell,
+        "sequence": mock_linked_record,
+    }
+
+    converted_values, invalid_values, empty_cells = _classify_record_values(values)
+
+    # The linked record should be converted into a LatchRecordModel
+    assert converted_values["sample_name"] == "my_sample"
+    assert converted_values["concentration"] == mock_invalid
+    assert converted_values["experiment_id"] == mock_empty_cell
+    assert converted_values["sequence"] == LatchRecordModel(id="123", name="DNA123/seq_abc")
+
+    # Invalid value entries should have the raw value recorded here
+    assert len(invalid_values) == 1
+    assert invalid_values["concentration"] == "not_a_float"
+
+    assert len(empty_cells) == 1
+    assert empty_cells[0] == "experiment_id"
