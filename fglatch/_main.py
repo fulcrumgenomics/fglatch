@@ -28,5 +28,6 @@ def run() -> None:
     defopt.run(
         funcs=TOOLS,
         argv=sys.argv[1:],
+        version=True,
     )
     logger.info("Finished executing successfully.")
