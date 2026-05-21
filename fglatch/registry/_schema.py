@@ -4,7 +4,11 @@ from typing import TYPE_CHECKING
 # TODO: switch to the public re-export once fgmetric promotes these symbols
 # out of `_typing_extensions`.
 from fgmetric._typing_extensions import TypeAnnotation
+from fgmetric._typing_extensions import is_optional
+from fgmetric._typing_extensions import unpack_optional
 from latch.registry.table import Table
+from latch.registry.types import Column
+from latch.registry.utils import to_python_type
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import computed_field
@@ -197,6 +201,10 @@ def _validate_table_schema(
                     model_type=annotation,
                 )
             )
+            continue
+        mismatch = _compare_field_to_column(field_name, annotation, columns[field_name])
+        if mismatch is not None:
+            mismatches.append(mismatch)
 
     if not allow_extra_columns:
         for column_name, column in columns.items():
@@ -211,3 +219,65 @@ def _validate_table_schema(
             )
 
     return mismatches
+
+
+def _compare_field_to_column(
+    field_name: str,
+    model_annotation: TypeAnnotation,
+    column: Column,
+) -> SchemaMismatch | None:
+    """
+    Compare one model field's annotation to one Registry `Column`.
+
+    Resolves nullability against the column's `allowEmpty` first; if the two
+    disagree, returns a `NULLABILITY_MISMATCH`. Otherwise, unwraps `T | None`
+    on both sides and defers the unwrapped comparison to `_compare_unwrapped`.
+
+    The `allowEmpty` key is defensively defaulted to `False` ("required") if
+    absent — the SDK's TypedDict marks it as required, but a malformed payload
+    shouldn't crash validation.
+    """
+    model_is_nullable = is_optional(model_annotation)
+    column_is_nullable: bool = column.upstream_type.get("allowEmpty", False)
+    column_python_type = to_python_type(column.upstream_type["type"])
+
+    if model_is_nullable != column_is_nullable:
+        return SchemaMismatch(
+            kind=SchemaMismatchKind.NULLABILITY_MISMATCH,
+            model_field=field_name,
+            column_name=column.key,
+            model_type=model_annotation,
+            column_type=column_python_type,
+        )
+
+    expected_type = unpack_optional(model_annotation) if model_is_nullable else model_annotation
+    return _compare_unwrapped(field_name, column.key, expected_type, column_python_type)
+
+
+def _compare_unwrapped(
+    field_name: str,
+    column_name: str,
+    model_type: TypeAnnotation,
+    column_type: TypeAnnotation,
+) -> SchemaMismatch | None:
+    """
+    Compare a pre-unwrapped model type to a pre-unwrapped column type.
+
+    Both inputs have already had `T | None` / `Union[T, EmptyCell]` stripped at the
+    caller. Primitive identity is the comparison performed here; richer dispatch
+    branches (enums, blobs, arrays, links) are added by subsequent helpers in the
+    same module.
+    """
+    # TODO: union columns (Latch `to_python_type` returns `Union[A, B]` for non-None
+    # unions) fall through this dispatch and produce a confusing `TYPE_MISMATCH`. Add
+    # explicit detection + a dedicated mismatch kind, or document the limitation.
+    if model_type is column_type:
+        return None
+
+    return SchemaMismatch(
+        kind=SchemaMismatchKind.TYPE_MISMATCH,
+        model_field=field_name,
+        column_name=column_name,
+        model_type=model_type,
+        column_type=column_type,
+    )

@@ -227,3 +227,116 @@ def test_multiple_mismatches_collected(mocker: MockerFixture) -> None:
 
     kinds = {m.kind for m in mismatches}
     assert kinds == {SchemaMismatchKind.MISSING_ON_TABLE, SchemaMismatchKind.MISSING_ON_MODEL}
+
+
+# _validate_table_schema tests — primitive comparison and nullability.
+
+
+def test_validate_all_primitives_happy(mocker: MockerFixture) -> None:
+    """A model with each supported primitive matches a correspondingly-typed table."""
+    from datetime import date
+    from datetime import datetime
+
+    class Model(LatchRecordModel):
+        string_col: str
+        int_col: int
+        float_col: float
+        bool_col: bool
+        date_col: date
+        datetime_col: datetime
+
+    table = _table(
+        mocker,
+        {
+            "string_col": _column(str, "string"),
+            "int_col": _column(int, "integer"),
+            "float_col": _column(float, "number"),
+            "bool_col": _column(bool, "boolean"),
+            "date_col": _column(date, "date"),
+            "datetime_col": _column(datetime, "datetime"),
+        },
+    )
+
+    assert _validate_table_schema(Model, table, allow_extra_columns=True) == []
+
+
+def test_type_mismatch_emits_type_mismatch(mocker: MockerFixture) -> None:
+    """Model field type differs from the column's primitive → `TYPE_MISMATCH`."""
+
+    class Model(LatchRecordModel):
+        x: str
+
+    mismatches = _validate_table_schema(
+        Model,
+        _table(mocker, {"x": _column(int, "integer")}),
+        allow_extra_columns=True,
+    )
+
+    assert len(mismatches) == 1
+    assert mismatches[0].kind is SchemaMismatchKind.TYPE_MISMATCH
+    assert mismatches[0].model_field == "x"
+    assert mismatches[0].column_name == "x"
+    assert mismatches[0].model_type is str
+    assert mismatches[0].column_type is int
+
+
+def test_nullable_field_matches_allow_empty_column(mocker: MockerFixture) -> None:
+    """`T | None` on the model matches `allowEmpty=True` on the column."""
+
+    class Model(LatchRecordModel):
+        maybe_str: str | None = None
+
+    table = _table(mocker, {"maybe_str": _column(str, "string", allow_empty=True)})
+
+    assert _validate_table_schema(Model, table, allow_extra_columns=True) == []
+
+
+def test_nullability_mismatch_model_nullable_column_required(mocker: MockerFixture) -> None:
+    """Model declares `T | None` but the column is required → `NULLABILITY_MISMATCH`."""
+
+    class Model(LatchRecordModel):
+        x: str | None = None
+
+    mismatches = _validate_table_schema(
+        Model,
+        _table(mocker, {"x": _column(str, "string", allow_empty=False)}),
+        allow_extra_columns=True,
+    )
+
+    assert len(mismatches) == 1
+    assert mismatches[0].kind is SchemaMismatchKind.NULLABILITY_MISMATCH
+
+
+def test_nullability_mismatch_model_required_column_nullable(mocker: MockerFixture) -> None:
+    """Model declares `T` but the column is nullable → `NULLABILITY_MISMATCH`."""
+
+    class Model(LatchRecordModel):
+        x: str
+
+    mismatches = _validate_table_schema(
+        Model,
+        _table(mocker, {"x": _column(str, "string", allow_empty=True)}),
+        allow_extra_columns=True,
+    )
+
+    assert len(mismatches) == 1
+    assert mismatches[0].kind is SchemaMismatchKind.NULLABILITY_MISMATCH
+
+
+def test_missing_allow_empty_defaults_to_required(mocker: MockerFixture) -> None:
+    """A column whose upstream_type lacks `allowEmpty` is treated as required (defensive)."""
+
+    class Model(LatchRecordModel):
+        x: str
+
+    upstream_type: DBType = {"type": {"primitive": "string"}}  # type: ignore[typeddict-item]  # intentionally omits allowEmpty
+    column = Column(key="x", type=str, upstream_type=upstream_type)
+
+    mismatches = _validate_table_schema(
+        Model,
+        _table(mocker, {"x": column}),
+        allow_extra_columns=True,
+    )
+
+    # Model is required (no `| None`); column treated as required → no mismatch.
+    assert mismatches == []
