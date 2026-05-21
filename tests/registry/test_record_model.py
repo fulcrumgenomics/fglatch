@@ -5,12 +5,16 @@ import pytest
 from latch.registry.record import Record
 from latch.registry.table import Table
 from latch.registry.table import TableNotFoundError
+from latch.registry.types import Column
 from latch.registry.types import EmptyCell
 from latch.registry.types import InvalidValue
+from latch.registry.upstream_types.types import DBType
 from pydantic import ValidationError
 from pytest_mock import MockerFixture
 
 from fglatch.registry import LatchRecordModel
+from fglatch.registry import RegistryTableSchemaError
+from fglatch.registry import SchemaMismatchKind
 from fglatch.registry import query_latch_records_by_name
 from fglatch.registry._record_model import _classify_record_values
 from fglatch.registry._record_model import _safe_table_name
@@ -357,3 +361,68 @@ def test_classify_record_values(mocker: MockerFixture) -> None:
 
     assert len(empty_cells) == 1
     assert empty_cells[0] == "experiment_id"
+
+
+# LatchRecordModel.validate_table_schema classmethod.
+
+
+def _schema_fixture_column(key: str, py_type: type, primitive: str) -> Column:
+    """Minimal typed Column for validate_table_schema wiring tests."""
+    upstream_type: DBType = {
+        "type": {"primitive": primitive},  # type: ignore[typeddict-item]  # test fixture keeps primitive parametric
+        "allowEmpty": False,
+    }
+    return Column(key=key, type=py_type, upstream_type=upstream_type)
+
+
+def test_validate_table_schema_loads_and_succeeds(mocker: MockerFixture) -> None:
+    """The classmethod constructs a Table(id=...), calls load(), and succeeds on a match."""
+
+    class Model(LatchRecordModel):
+        x: str
+
+    mock_table = mocker.MagicMock(spec=Table)
+    mock_table.get_columns.return_value = {"x": _schema_fixture_column("x", str, "string")}
+    mocker.patch("fglatch.registry._record_model.Table", return_value=mock_table)
+
+    Model.validate_table_schema("1234")
+
+    mock_table.load.assert_called_once()
+
+
+def test_validate_table_schema_raises_on_mismatch(mocker: MockerFixture) -> None:
+    """The classmethod raises RegistryTableSchemaError when the helper returns mismatches."""
+
+    class Model(LatchRecordModel):
+        x: str
+
+    mock_table = mocker.MagicMock(spec=Table)
+    mock_table.get_columns.return_value = {}  # Model declares x, table has nothing.
+    mocker.patch("fglatch.registry._record_model.Table", return_value=mock_table)
+
+    with pytest.raises(RegistryTableSchemaError) as exc_info:
+        Model.validate_table_schema("1234")
+
+    assert len(exc_info.value.mismatches) == 1
+    assert exc_info.value.mismatches[0].kind is SchemaMismatchKind.MISSING_ON_TABLE
+    assert exc_info.value.mismatches[0].model_field == "x"
+
+
+def test_validate_table_schema_forwards_allow_extra_columns(mocker: MockerFixture) -> None:
+    """`allow_extra_columns=False` surfaces `MISSING_ON_MODEL` where the default is silent."""
+
+    class Model(LatchRecordModel):
+        pass
+
+    mock_table = mocker.MagicMock(spec=Table)
+    mock_table.get_columns.return_value = {
+        "unexpected": _schema_fixture_column("unexpected", str, "string")
+    }
+    mocker.patch("fglatch.registry._record_model.Table", return_value=mock_table)
+
+    # Default allow_extra_columns=True — silent.
+    Model.validate_table_schema("1234")
+
+    with pytest.raises(RegistryTableSchemaError) as exc_info:
+        Model.validate_table_schema("1234", allow_extra_columns=False)
+    assert exc_info.value.mismatches[0].kind is SchemaMismatchKind.MISSING_ON_MODEL
