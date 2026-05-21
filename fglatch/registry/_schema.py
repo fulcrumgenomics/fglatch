@@ -1,11 +1,16 @@
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 # TODO: switch to the public re-export once fgmetric promotes these symbols
 # out of `_typing_extensions`.
 from fgmetric._typing_extensions import TypeAnnotation
+from latch.registry.table import Table
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import computed_field
+
+if TYPE_CHECKING:
+    from fglatch.registry._record_model import LatchRecordModel
 
 
 class SchemaMismatchKind(StrEnum):
@@ -144,3 +149,65 @@ def _render(annotation: TypeAnnotation | None) -> str:
     else:
         rendered = str(annotation)
     return rendered
+
+
+_SKIPPED_MODEL_FIELDS: frozenset[str] = frozenset({"id", "name"})
+"""Record metadata fields on `LatchRecordModel`; not Registry columns, so not validated."""
+
+
+def _validate_table_schema(
+    model_cls: "type[LatchRecordModel]",
+    table: Table,
+    *,
+    allow_extra_columns: bool,
+) -> list[SchemaMismatch]:
+    """
+    Compare a `LatchRecordModel`'s declared schema to a live Registry `Table`.
+
+    Enumerates the model's `model_fields` (excluding the base `id` / `name`) and the
+    table's columns; reports `missing_on_table` for declared fields with no matching
+    column, and (when `allow_extra_columns=False`) `missing_on_model` for columns the
+    model does not declare.
+
+    Args:
+        model_cls: A `LatchRecordModel` subclass whose `model_fields` are compared.
+        table: A Registry table whose columns are inspected. The caller is responsible
+            for calling `table.load()` before passing it in.
+        allow_extra_columns: If False, columns present on the table but not declared on
+            the model produce `missing_on_model` errors.
+
+    Returns:
+        One `SchemaMismatch` per detected disagreement. Empty list when the schema matches.
+    """
+    mismatches: list[SchemaMismatch] = []
+    columns = table.get_columns()
+
+    model_annotations: dict[str, TypeAnnotation] = {
+        name: info.annotation
+        for name, info in model_cls.model_fields.items()
+        if name not in _SKIPPED_MODEL_FIELDS and info.annotation is not None
+    }
+
+    for field_name, annotation in model_annotations.items():
+        if field_name not in columns:
+            mismatches.append(
+                SchemaMismatch(
+                    kind=SchemaMismatchKind.MISSING_ON_TABLE,
+                    model_field=field_name,
+                    model_type=annotation,
+                )
+            )
+
+    if not allow_extra_columns:
+        for column_name, column in columns.items():
+            if column_name in model_annotations:
+                continue
+            mismatches.append(
+                SchemaMismatch(
+                    kind=SchemaMismatchKind.MISSING_ON_MODEL,
+                    column_name=column_name,
+                    column_type=column.type,
+                )
+            )
+
+    return mismatches
