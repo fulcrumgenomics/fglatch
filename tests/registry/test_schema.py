@@ -7,6 +7,7 @@ from typing import Union
 from typing import cast
 
 import pytest
+from latch.registry.record import Record
 from latch.registry.table import Table
 from latch.registry.types import Column
 from latch.registry.types import EmptyCell
@@ -29,6 +30,18 @@ def _column(py_type: Any, primitive: _BasicPrimitive, allow_empty: bool = False)
     column_type: Any = Union[py_type, EmptyCell] if allow_empty else py_type
     upstream_type: DBType = {
         "type": {"primitive": primitive},
+        "allowEmpty": allow_empty,
+    }
+    return Column(key="<placeholder>", type=column_type, upstream_type=upstream_type)
+
+
+def _link_column(experiment_id: str, allow_empty: bool = False) -> Column:
+    """Build a Registry link Column pointing at the given table's experimentId."""
+    column_type: Any = Record
+    if allow_empty:
+        column_type = Union[column_type, EmptyCell]
+    upstream_type: DBType = {
+        "type": {"primitive": "link", "experimentId": experiment_id},
         "allowEmpty": allow_empty,
     }
     return Column(key="<placeholder>", type=column_type, upstream_type=upstream_type)
@@ -786,3 +799,78 @@ def test_nullable_list_happy(mocker: MockerFixture) -> None:
     table = _table(mocker, {"xs": _array_column(str, "string", allow_empty=True)})
 
     assert _validate_table_schema(Model, table, allow_extra_columns=True) == []
+
+
+# Link tests.
+
+
+class _LinkedRecord(LatchRecordModel):
+    """A LatchRecordModel subclass used as a link target in tests."""
+
+    title: str
+
+
+def test_link_field_happy_with_typed_target(mocker: MockerFixture) -> None:
+    """A LatchRecordModel subclass on the model ↔ link column validates cleanly."""
+
+    class Model(LatchRecordModel):
+        parent: _LinkedRecord
+
+    table = _table(mocker, {"parent": _link_column("9999")})
+
+    assert _validate_table_schema(Model, table, allow_extra_columns=True) == []
+
+
+def test_link_field_happy_with_bare_base(mocker: MockerFixture) -> None:
+    """A bare `LatchRecordModel` annotation ↔ link column validates cleanly."""
+
+    class Model(LatchRecordModel):
+        parent: LatchRecordModel
+
+    table = _table(mocker, {"parent": _link_column("9999")})
+
+    assert _validate_table_schema(Model, table, allow_extra_columns=True) == []
+
+
+def test_link_field_type_mismatch_when_column_not_link(mocker: MockerFixture) -> None:
+    """Model declares a record subclass but column is a string primitive → `TYPE_MISMATCH`."""
+
+    class Model(LatchRecordModel):
+        parent: _LinkedRecord
+
+    table = _table(mocker, {"parent": _column(str, "string")})
+
+    mismatches = _validate_table_schema(Model, table, allow_extra_columns=True)
+
+    assert len(mismatches) == 1
+    assert mismatches[0].kind is SchemaMismatchKind.TYPE_MISMATCH
+
+
+def test_nullable_link_field_happy(mocker: MockerFixture) -> None:
+    """`RecordSubclass | None` ↔ nullable link column validates cleanly."""
+
+    class Model(LatchRecordModel):
+        parent: _LinkedRecord | None = None
+
+    table = _table(mocker, {"parent": _link_column("9999", allow_empty=True)})
+
+    assert _validate_table_schema(Model, table, allow_extra_columns=True) == []
+
+
+def test_unrelated_basemodel_does_not_match_link(mocker: MockerFixture) -> None:
+    """A BaseModel without id/name doesn't get flagged as a record link."""
+    from pydantic import BaseModel
+
+    class NotARecord(BaseModel):
+        x: int
+
+    class Model(LatchRecordModel):
+        thing: NotARecord
+
+    table = _table(mocker, {"thing": _link_column("9999")})
+
+    mismatches = _validate_table_schema(Model, table, allow_extra_columns=True)
+
+    # Treated as a primitive type comparison → TYPE_MISMATCH against Record.
+    assert len(mismatches) == 1
+    assert mismatches[0].kind is SchemaMismatchKind.TYPE_MISMATCH

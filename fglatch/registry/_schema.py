@@ -9,6 +9,7 @@ from fgmetric._typing_extensions import TypeAnnotation
 from fgmetric._typing_extensions import is_list
 from fgmetric._typing_extensions import is_optional
 from fgmetric._typing_extensions import unpack_optional
+from latch.registry.record import Record
 from latch.registry.table import Table
 from latch.registry.types import Column
 from latch.registry.utils import to_python_type
@@ -285,6 +286,9 @@ def _compare_unwrapped(
     if is_list(model_type):
         return _compare_list(field_name, column_name, model_type, column_type)
 
+    if _looks_like_latch_record_model(model_type):
+        return _compare_link(field_name, column_name, model_type, column_type)
+
     if model_type is column_type:
         return None
 
@@ -421,4 +425,45 @@ def _compare_list(
 
     return _compare_unwrapped(
         f"{field_name}[*]", f"{column_name}[*]", model_args[0], column_args[0]
+    )
+
+
+def _looks_like_latch_record_model(t: TypeAnnotation) -> bool:
+    """
+    Structural check for a `LatchRecordModel` subclass.
+
+    Identifies a Pydantic `BaseModel` subclass that declares the `id` and `name` fields
+    `LatchRecordModel` mandates. The check is structural (no `issubclass(t, LatchRecordModel)`)
+    so this module doesn't need to import `_record_model` — which imports back from here,
+    and would otherwise produce a circular import that has to be papered over with a lazy
+    function-local import.
+    """
+    return (
+        isinstance(t, type) and issubclass(t, BaseModel) and {"id", "name"} <= t.model_fields.keys()
+    )
+
+
+def _compare_link(
+    field_name: str,
+    column_name: str,
+    model_type: TypeAnnotation,
+    column_type: TypeAnnotation,
+) -> SchemaMismatch | None:
+    """
+    Confirm a `LatchRecordModel` model field maps to a Registry `link` column.
+
+    Per spec, the link's target table is not checked — any `LatchRecordModel` subclass
+    matches any `link` column. That keeps the check tolerant of models that represent
+    only a subset of a larger linked table. The SDK's `to_python_type` maps link columns
+    to `Record`, so a column is a link iff `column_type is Record`.
+    """
+    if column_type is Record:
+        return None
+
+    return SchemaMismatch(
+        kind=SchemaMismatchKind.TYPE_MISMATCH,
+        model_field=field_name,
+        column_name=column_name,
+        model_type=model_type,
+        column_type=column_type,
     )
