@@ -426,3 +426,65 @@ def test_validate_table_schema_forwards_allow_extra_columns(mocker: MockerFixtur
     with pytest.raises(RegistryTableSchemaError) as exc_info:
         Model.validate_table_schema("1234", allow_extra_columns=False)
     assert exc_info.value.mismatches[0].kind is SchemaMismatchKind.MISSING_ON_MODEL
+
+
+# from_record(validate_schema=True) integration.
+
+
+def test_from_record_validate_schema_happy(mocker: MockerFixture) -> None:
+    """`from_record(validate_schema=True)` succeeds when the table's schema matches."""
+
+    class Model(LatchRecordModel):
+        x: str
+
+    mock_record = mocker.MagicMock(spec=Record)
+    mock_record.id = "rec_id"
+    mock_record.get_name.return_value = "my_record"
+    mock_record.get_table_id.return_value = "tbl_id"
+    mock_record.get_values.return_value = {"x": "hello"}
+
+    mock_table = mocker.MagicMock(spec=Table)
+    mock_table.id = "tbl_id"
+    mock_table.get_display_name.return_value = "My Table"
+    mock_table.get_columns.return_value = {"x": _schema_fixture_column("x", str, "string")}
+    mocker.patch("fglatch.registry._record_model.Table", return_value=mock_table)
+
+    result = Model.from_record(mock_record, table_id="tbl_id", validate_schema=True)
+
+    assert result.x == "hello"
+
+
+def test_from_record_validate_schema_raises_on_mismatch(mocker: MockerFixture) -> None:
+    """`from_record(validate_schema=True)` raises when the schema doesn't match."""
+
+    class Model(LatchRecordModel):
+        x: str
+
+    mock_record = mocker.MagicMock(spec=Record)
+    mock_record.id = "rec_id"
+    mock_record.get_name.return_value = "my_record"
+    mock_record.get_table_id.return_value = "tbl_id"
+    mock_record.get_values.return_value = {"x": "hello"}
+
+    mock_table = mocker.MagicMock(spec=Table)
+    mock_table.id = "tbl_id"
+    mock_table.get_display_name.return_value = "My Table"
+    mock_table.get_columns.return_value = {}  # model declares x, table has no columns
+    mocker.patch("fglatch.registry._record_model.Table", return_value=mock_table)
+
+    with pytest.raises(RegistryTableSchemaError):
+        Model.from_record(mock_record, table_id="tbl_id", validate_schema=True)
+
+
+def test_from_record_validate_schema_requires_table_id(mocker: MockerFixture) -> None:
+    """validate_schema=True without table_id raises ValueError (not RegistryTableSchemaError)."""
+
+    class Model(LatchRecordModel):
+        x: str
+
+    mock_record = mocker.MagicMock(spec=Record)
+
+    with pytest.raises(ValueError) as exc_info:
+        Model.from_record(mock_record, validate_schema=True)
+
+    assert not isinstance(exc_info.value, RegistryTableSchemaError)

@@ -61,6 +61,7 @@ class LatchRecordModel(BaseModel):
         table_id: str | None = None,
         exclude_empty_values: bool = False,
         exclude_invalid_values: bool = False,
+        validate_schema: bool = False,
     ) -> Self:
         """
         Create a validated model instance from a Latch Registry Record.
@@ -70,23 +71,36 @@ class LatchRecordModel(BaseModel):
 
         Args:
             record: A record retrieved from a Latch Registry table via the SDK.
-            table_id: An optional table ID to check the record against.
+            table_id: An optional table ID to check the record against. Required when
+                `validate_schema=True`.
             exclude_empty_values: If True, record attributes with value `EmptyCell` are excluded
                 prior to validation and a warning is logged.
             exclude_invalid_values: If True, record attributes with value `InvalidValue` are
                 excluded prior to validation and a warning is logged.
+            validate_schema: If True, run `validate_table_schema(table_id)` before decoding the
+                record's values. Fails loudly on schema drift. Requires `table_id` to be set.
+                Each call performs a network round-trip to reload the table — callers iterating
+                over many records should call `cls.validate_table_schema(table_id)` once up front
+                and then call `from_record` without this flag.
 
         Returns:
             A validated instance of the model with all field data populated.
 
         Raises:
             ValueError: If the record originates from a different table than the one specified by
-                `table_id`.
+                `table_id`, or if `validate_schema=True` without a `table_id`.
+            RegistryTableSchemaError: If `validate_schema=True` and the Registry table's schema
+                disagrees with this model's schema.
             ValidationError: If the record data fails model validation (e.g. missing required
                 fields, incorrect types).
         """
+        if validate_schema and table_id is None:
+            raise ValueError("`validate_schema=True` requires `table_id` to be set.")
+
         if table_id is not None:
             _validate_source_table(record, table_id)
+            if validate_schema:
+                cls.validate_table_schema(table_id)
 
         # Convert a Record to a dictionary.
         record_name: str = record.get_name()
