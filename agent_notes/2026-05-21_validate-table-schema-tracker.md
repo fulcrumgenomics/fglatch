@@ -22,9 +22,9 @@ Each child PR is stacked on the previous one. Mark complete when merged.
 
 ## Cross-cutting refactors (apply across the whole stack)
 
-- [ ] **Drop `Any` where possible.** Use `TypeAnnotation` (from `fgmetric._typing_extensions` — to be promoted to the public API by @msto) for model annotations.
-- [ ] **Reuse `fgmetric` type introspection.** Replace `_is_nullable` → `is_optional`, `_unwrap_none` → `unpack_optional`, list checks → `is_list` / `has_origin`. Adds `fgmetric>=0.3` as a runtime dependency.
-- [ ] **Rename `expected` / `actual` on `SchemaMismatch`.** Both names are ambiguous — "expected by whom?" Rename to `model_type` / `column_type` (and similarly for the `field` / `column_name` distinction in the missing/extra cases). Update messages.
+- [ ] **Drop `Any` where possible.** Use `TypeAnnotation` (imported from `fgmetric._typing_extensions` — private import for now; TODO: switch to the public API once @msto promotes it).
+- [ ] **Reuse `fgmetric` type introspection.** Replace `_is_nullable` → `is_optional`, `_unwrap_none` → `unpack_optional`, list checks → `is_list` / `has_origin`. Adds `fgmetric>=0.3` as a runtime dep. (Possible future extraction into a dedicated `fgtyping` package — trigger is the second non-metric consumer.)
+- [ ] **Rename `expected` / `actual` on `SchemaMismatch`.** Both names are ambiguous — "expected by whom?" New schema: two optional fields, `model_type: TypeAnnotation | None` and `column_type: TypeAnnotation | None`, plus two optional name fields, `model_field: str | None` and `column_name: str | None`. Which slots are populated depends on `kind`. Messages derive from whatever is populated.
 
 ## Per-PR review fixes
 
@@ -54,7 +54,8 @@ Each child PR is stacked on the previous one. Mark complete when merged.
 
 ### #50a — enum (split from #50)
 
-- [ ] Compare enum members by `.value`, not `.name`, when the model's enum is value-typed. Current `.name` comparison is wrong for `StrEnum`-style enums where values carry the Registry strings. Validate the assumption in the SDK source.
+- [ ] Fix enum comparison. SDK constructs the column's type as `Enum("Enum", members)`, which puts the Registry strings in `.name` and auto-ints in `.value`. The model side (Python convention) puts the Python identifier in `.name` (e.g. `"FOO"`) and the user-assigned string in `.value` (e.g. `"Foo"`). Correct comparison: **Registry `.name` ↔ Model `.value`**. The current test fixture happened to use identifiers identical to values (`ALPHA = "ALPHA"`), masking the bug.
+- [ ] Decide how to handle `auto()`-valued model enums (where `.value` is a meaningless int): either reject them with a clear error, or fall back to `.name`-on-both-sides with a documented caveat. Recommend rejection — the user should be explicit about which string the enum maps to.
 - [ ] Rename `expected`/`actual` per cross-cutting item.
 
 ### #50b — blob (new, split from #50)
