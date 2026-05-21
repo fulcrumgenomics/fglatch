@@ -1,3 +1,4 @@
+from enum import Enum
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
@@ -264,13 +265,16 @@ def _compare_unwrapped(
     Compare a pre-unwrapped model type to a pre-unwrapped column type.
 
     Both inputs have already had `T | None` / `Union[T, EmptyCell]` stripped at the
-    caller. Primitive identity is the comparison performed here; richer dispatch
-    branches (enums, blobs, arrays, links) are added by subsequent helpers in the
-    same module.
+    caller. Primitive identity and enum-member equality are the comparisons performed
+    here; richer dispatch branches (blobs, arrays, links) are added by subsequent
+    helpers in the same module.
     """
     # TODO: union columns (Latch `to_python_type` returns `Union[A, B]` for non-None
     # unions) fall through this dispatch and produce a confusing `TYPE_MISMATCH`. Add
     # explicit detection + a dedicated mismatch kind, or document the limitation.
+    if isinstance(model_type, type) and issubclass(model_type, Enum):
+        return _compare_enum(field_name, column_name, model_type, column_type)
+
     if model_type is column_type:
         return None
 
@@ -279,5 +283,49 @@ def _compare_unwrapped(
         model_field=field_name,
         column_name=column_name,
         model_type=model_type,
+        column_type=column_type,
+    )
+
+
+def _compare_enum(
+    field_name: str,
+    column_name: str,
+    model_enum: type[Enum],
+    column_type: TypeAnnotation,
+) -> SchemaMismatch | None:
+    """
+    Compare an `Enum` subclass on the model to a Registry `enum` column.
+
+    The SDK builds the column's Python type via `Enum("Enum", members)`, which puts the
+    Registry member strings in `.name` and auto-assigned ints in `.value`. Per Python
+    convention, model enums put the Python identifier (e.g. "FOO") in `.name` and the
+    user-assigned string (e.g. "Foo") in `.value`. The two sides that should agree are
+    therefore **column member `.name`** ↔ **model member `.value`**.
+
+    Model enums whose `.value` is not a string (e.g. `auto()`-valued, `IntEnum`) will
+    fail this comparison wholesale because the value sets won't match the column's
+    string members. That is intentional — the user must explicitly choose the Registry
+    strings via `.value`.
+    """
+    if not (isinstance(column_type, type) and issubclass(column_type, Enum)):
+        return SchemaMismatch(
+            kind=SchemaMismatchKind.TYPE_MISMATCH,
+            model_field=field_name,
+            column_name=column_name,
+            model_type=model_enum,
+            column_type=column_type,
+        )
+
+    model_strings: set[str] = {m.value for m in model_enum if isinstance(m.value, str)}
+    column_strings: set[str] = {m.name for m in column_type}
+
+    if model_strings == column_strings:
+        return None
+
+    return SchemaMismatch(
+        kind=SchemaMismatchKind.ENUM_MEMBER_MISMATCH,
+        model_field=field_name,
+        column_name=column_name,
+        model_type=model_enum,
         column_type=column_type,
     )
