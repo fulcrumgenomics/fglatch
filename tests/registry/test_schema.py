@@ -1,3 +1,6 @@
+from enum import Enum
+from enum import IntEnum
+from enum import StrEnum
 from typing import Any
 from typing import Literal
 from typing import Union
@@ -24,6 +27,17 @@ def _column(py_type: Any, primitive: _BasicPrimitive, allow_empty: bool = False)
     column_type: Any = Union[py_type, EmptyCell] if allow_empty else py_type
     upstream_type: DBType = {
         "type": {"primitive": primitive},
+        "allowEmpty": allow_empty,
+    }
+    return Column(key="<placeholder>", type=column_type, upstream_type=upstream_type)
+
+
+def _enum_column(members: list[str], allow_empty: bool = False) -> Column:
+    """Build an enum Column mirroring the SDK's `Enum("Enum", members)` construction."""
+    dynamic_enum: Any = Enum("Enum", members)  # type: ignore[misc]  # mypy can't infer dynamic enum members
+    column_type: Any = Union[dynamic_enum, EmptyCell] if allow_empty else dynamic_enum
+    upstream_type: DBType = {
+        "type": {"primitive": "enum", "members": members},
         "allowEmpty": allow_empty,
     }
     return Column(key="<placeholder>", type=column_type, upstream_type=upstream_type)
@@ -340,3 +354,142 @@ def test_missing_allow_empty_defaults_to_required(mocker: MockerFixture) -> None
 
     # Model is required (no `| None`); column treated as required → no mismatch.
     assert mismatches == []
+
+
+# Enum tests.
+#
+# The SDK builds column enums via `Enum("Enum", members)`, which puts the Registry strings
+# in `.name` and auto-ints in `.value`. Model enums put the Python identifier in `.name`
+# and the user-assigned string in `.value`. So the comparison is model `.value` ↔ column
+# `.name`. These fixtures exercise the realistic shape where identifiers and values differ.
+
+
+class _Status(StrEnum):
+    """StrEnum: `.value` is the Registry string we want to match against."""
+
+    ALPHA = "Alpha"
+    BETA = "Beta"
+    GAMMA = "Gamma"
+
+
+class _StatusMissingMember(StrEnum):
+    """Missing GAMMA relative to the fixture column."""
+
+    ALPHA = "Alpha"
+    BETA = "Beta"
+
+
+class _StatusExtraMember(StrEnum):
+    """Declares DELTA, which the fixture column does not have."""
+
+    ALPHA = "Alpha"
+    BETA = "Beta"
+    GAMMA = "Gamma"
+    DELTA = "Delta"
+
+
+class _StatusNonStringValues(Enum):
+    """Non-string-valued enum — values are ints, so model `.value` can't match column `.name`."""
+
+    ALPHA = 1
+    BETA = 2
+    GAMMA = 3
+
+
+def test_enum_field_happy(mocker: MockerFixture) -> None:
+    """A model StrEnum whose values match the column's members validates cleanly."""
+
+    class Model(LatchRecordModel):
+        status: _Status
+
+    table = _table(mocker, {"status": _enum_column(["Alpha", "Beta", "Gamma"])})
+
+    assert _validate_table_schema(Model, table, allow_extra_columns=True) == []
+
+
+def test_enum_member_missing_on_model(mocker: MockerFixture) -> None:
+    """Column has a member the model does not → `ENUM_MEMBER_MISMATCH`."""
+
+    class Model(LatchRecordModel):
+        status: _StatusMissingMember
+
+    table = _table(mocker, {"status": _enum_column(["Alpha", "Beta", "Gamma"])})
+
+    mismatches = _validate_table_schema(Model, table, allow_extra_columns=True)
+
+    assert len(mismatches) == 1
+    assert mismatches[0].kind is SchemaMismatchKind.ENUM_MEMBER_MISMATCH
+
+
+def test_enum_member_extra_on_model(mocker: MockerFixture) -> None:
+    """Model declares a member the column does not → `ENUM_MEMBER_MISMATCH`."""
+
+    class Model(LatchRecordModel):
+        status: _StatusExtraMember
+
+    table = _table(mocker, {"status": _enum_column(["Alpha", "Beta", "Gamma"])})
+
+    mismatches = _validate_table_schema(Model, table, allow_extra_columns=True)
+
+    assert len(mismatches) == 1
+    assert mismatches[0].kind is SchemaMismatchKind.ENUM_MEMBER_MISMATCH
+
+
+def test_enum_with_non_string_values_fails(mocker: MockerFixture) -> None:
+    """Model enum with non-string values can't match the column's string members."""
+
+    class Model(LatchRecordModel):
+        status: _StatusNonStringValues  # values are ints, not strings
+
+    table = _table(mocker, {"status": _enum_column(["Alpha", "Beta", "Gamma"])})
+
+    mismatches = _validate_table_schema(Model, table, allow_extra_columns=True)
+
+    assert len(mismatches) == 1
+    assert mismatches[0].kind is SchemaMismatchKind.ENUM_MEMBER_MISMATCH
+
+
+def test_enum_int_enum_member_mismatch(mocker: MockerFixture) -> None:
+    """`IntEnum` model field can never match a column whose members are Registry strings."""
+
+    class IntStatus(IntEnum):
+        ALPHA = 1
+        BETA = 2
+
+    class Model(LatchRecordModel):
+        status: IntStatus
+
+    table = _table(mocker, {"status": _enum_column(["Alpha", "Beta"])})
+
+    mismatches = _validate_table_schema(Model, table, allow_extra_columns=True)
+
+    assert len(mismatches) == 1
+    assert mismatches[0].kind is SchemaMismatchKind.ENUM_MEMBER_MISMATCH
+
+
+def test_enum_field_type_mismatch_when_column_is_not_enum(mocker: MockerFixture) -> None:
+    """Model declares an Enum but the column is a string primitive → `TYPE_MISMATCH`."""
+
+    class Model(LatchRecordModel):
+        status: _Status
+
+    table = _table(mocker, {"status": _column(str, "string")})
+
+    mismatches = _validate_table_schema(Model, table, allow_extra_columns=True)
+
+    assert len(mismatches) == 1
+    assert mismatches[0].kind is SchemaMismatchKind.TYPE_MISMATCH
+
+
+def test_nullable_enum_field_happy(mocker: MockerFixture) -> None:
+    """`StrEnumT | None` on the model ↔ nullable enum column validates cleanly."""
+
+    class Model(LatchRecordModel):
+        status: _Status | None = None
+
+    table = _table(
+        mocker,
+        {"status": _enum_column(["Alpha", "Beta", "Gamma"], allow_empty=True)},
+    )
+
+    assert _validate_table_schema(Model, table, allow_extra_columns=True) == []
