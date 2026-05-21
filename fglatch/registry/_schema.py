@@ -10,6 +10,8 @@ from fgmetric._typing_extensions import unpack_optional
 from latch.registry.table import Table
 from latch.registry.types import Column
 from latch.registry.utils import to_python_type
+from latch.types.directory import LatchDir
+from latch.types.file import LatchFile
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import computed_field
@@ -275,6 +277,9 @@ def _compare_unwrapped(
     if isinstance(model_type, type) and issubclass(model_type, Enum):
         return _compare_enum(field_name, column_name, model_type, column_type)
 
+    if model_type is LatchFile or model_type is LatchDir:
+        return _compare_blob(field_name, column_name, model_type, column_type)
+
     if model_type is column_type:
         return None
 
@@ -327,5 +332,43 @@ def _compare_enum(
         model_field=field_name,
         column_name=column_name,
         model_type=model_enum,
+        column_type=column_type,
+    )
+
+
+def _compare_blob(
+    field_name: str,
+    column_name: str,
+    model_type: TypeAnnotation,
+    column_type: TypeAnnotation,
+) -> SchemaMismatch | None:
+    """
+    Compare a `LatchFile` / `LatchDir` model field to a Registry `blob` column.
+
+    The SDK's `to_python_type` routes blob columns through `get_blob_nodetype`, which
+    returns `LatchDir` when `metadata.nodeType == "dir"` and `LatchFile` otherwise
+    (including when metadata is missing entirely). So:
+
+    - Column is not `LatchFile` / `LatchDir` → `TYPE_MISMATCH` (not a blob).
+    - Sides agree → no mismatch.
+    - Sides disagree on file-vs-dir → `BLOB_TYPE_MISMATCH`.
+    """
+    if column_type is not LatchFile and column_type is not LatchDir:
+        return SchemaMismatch(
+            kind=SchemaMismatchKind.TYPE_MISMATCH,
+            model_field=field_name,
+            column_name=column_name,
+            model_type=model_type,
+            column_type=column_type,
+        )
+
+    if model_type is column_type:
+        return None
+
+    return SchemaMismatch(
+        kind=SchemaMismatchKind.BLOB_TYPE_MISMATCH,
+        model_field=field_name,
+        column_name=column_name,
+        model_type=model_type,
         column_type=column_type,
     )
