@@ -34,6 +34,22 @@ def _column(py_type: Any, primitive: _BasicPrimitive, allow_empty: bool = False)
     return Column(key="<placeholder>", type=column_type, upstream_type=upstream_type)
 
 
+def _array_column(
+    element_py_type: type,
+    element_primitive: _BasicPrimitive,
+    allow_empty: bool = False,
+) -> Column:
+    """Build a Registry array Column with a primitive element type."""
+    column_type: Any = list[element_py_type]  # type: ignore[valid-type]  # mypy can't use a variable as a type parameter
+    if allow_empty:
+        column_type = Union[column_type, EmptyCell]
+    upstream_type: DBType = {
+        "type": {"array": {"primitive": element_primitive}},
+        "allowEmpty": allow_empty,
+    }
+    return Column(key="<placeholder>", type=column_type, upstream_type=upstream_type)
+
+
 def _blob_column(node_type: str | None, allow_empty: bool = False) -> Column:
     """
     Build a blob Column. `node_type` is set in metadata when non-None.
@@ -607,5 +623,166 @@ def test_nullable_latch_file_happy(mocker: MockerFixture) -> None:
         f: LatchFile | None = None
 
     table = _table(mocker, {"f": _blob_column("file", allow_empty=True)})
+
+    assert _validate_table_schema(Model, table, allow_extra_columns=True) == []
+
+
+# Array tests.
+
+
+def test_list_of_strings_happy(mocker: MockerFixture) -> None:
+    """`list[str]` on the model ↔ `array<string>` column validates cleanly."""
+
+    class Model(LatchRecordModel):
+        tags: list[str]
+
+    table = _table(mocker, {"tags": _array_column(str, "string")})
+
+    assert _validate_table_schema(Model, table, allow_extra_columns=True) == []
+
+
+def test_list_of_ints_happy(mocker: MockerFixture) -> None:
+    """`list[int]` on the model ↔ `array<integer>` column validates cleanly."""
+
+    class Model(LatchRecordModel):
+        counts: list[int]
+
+    table = _table(mocker, {"counts": _array_column(int, "integer")})
+
+    assert _validate_table_schema(Model, table, allow_extra_columns=True) == []
+
+
+def test_list_with_mismatched_primitive_element(mocker: MockerFixture) -> None:
+    """`list[str]` on the model but `array<integer>` column → element-level `TYPE_MISMATCH`."""
+
+    class Model(LatchRecordModel):
+        xs: list[str]
+
+    table = _table(mocker, {"xs": _array_column(int, "integer")})
+
+    mismatches = _validate_table_schema(Model, table, allow_extra_columns=True)
+
+    assert len(mismatches) == 1
+    assert mismatches[0].kind is SchemaMismatchKind.TYPE_MISMATCH
+    assert mismatches[0].model_field == "xs[*]"
+
+
+def test_list_of_enums_happy(mocker: MockerFixture) -> None:
+    """`list[StrEnum]` ↔ `array<enum>` with matching members validates cleanly."""
+
+    class Model(LatchRecordModel):
+        statuses: list[_Status]
+
+    enum_array_type: DBType = {
+        "type": {"array": {"primitive": "enum", "members": ["Alpha", "Beta", "Gamma"]}},
+        "allowEmpty": False,
+    }
+    statuses_col_type: Any = list[_Status]
+    statuses_col = Column(
+        key="statuses",
+        type=statuses_col_type,
+        upstream_type=enum_array_type,
+    )
+    table = _table(mocker, {"statuses": statuses_col})
+
+    assert _validate_table_schema(Model, table, allow_extra_columns=True) == []
+
+
+def test_list_of_enums_member_mismatch_surfaces_as_enum_member_mismatch(
+    mocker: MockerFixture,
+) -> None:
+    """`list[Enum]` against `array<enum>` with disagreeing members → `ENUM_MEMBER_MISMATCH`."""
+
+    class Model(LatchRecordModel):
+        statuses: list[_StatusExtraMember]  # model has Alpha/Beta/Gamma/Delta
+
+    enum_array_type: DBType = {
+        "type": {"array": {"primitive": "enum", "members": ["Alpha", "Beta", "Gamma"]}},
+        "allowEmpty": False,
+    }
+    statuses_col_type: Any = list[_StatusExtraMember]
+    statuses_col = Column(
+        key="statuses",
+        type=statuses_col_type,
+        upstream_type=enum_array_type,
+    )
+    table = _table(mocker, {"statuses": statuses_col})
+
+    mismatches = _validate_table_schema(Model, table, allow_extra_columns=True)
+
+    assert len(mismatches) == 1
+    assert mismatches[0].kind is SchemaMismatchKind.ENUM_MEMBER_MISMATCH
+    assert mismatches[0].model_field == "statuses[*]"
+
+
+def test_list_of_blobs_happy(mocker: MockerFixture) -> None:
+    """`list[LatchFile]` ↔ `array<blob>` with file nodeType validates cleanly via recursion."""
+
+    class Model(LatchRecordModel):
+        files: list[LatchFile]
+
+    blob_array_type: DBType = {
+        "type": {"array": {"primitive": "blob", "metadata": {"nodeType": "file"}}},
+        "allowEmpty": False,
+    }
+    files_col_type: Any = list[LatchFile]
+    files_col = Column(
+        key="files",
+        type=files_col_type,
+        upstream_type=blob_array_type,
+    )
+    table = _table(mocker, {"files": files_col})
+
+    assert _validate_table_schema(Model, table, allow_extra_columns=True) == []
+
+
+def test_list_of_blobs_subtype_mismatch_surfaces_as_blob_type_mismatch(
+    mocker: MockerFixture,
+) -> None:
+    """`list[LatchFile]` against `array<blob>` with dir nodeType → `BLOB_TYPE_MISMATCH`."""
+
+    class Model(LatchRecordModel):
+        files: list[LatchFile]
+
+    blob_array_type: DBType = {
+        "type": {"array": {"primitive": "blob", "metadata": {"nodeType": "dir"}}},
+        "allowEmpty": False,
+    }
+    files_col_type: Any = list[LatchFile]
+    files_col = Column(
+        key="files",
+        type=files_col_type,
+        upstream_type=blob_array_type,
+    )
+    table = _table(mocker, {"files": files_col})
+
+    mismatches = _validate_table_schema(Model, table, allow_extra_columns=True)
+
+    assert len(mismatches) == 1
+    assert mismatches[0].kind is SchemaMismatchKind.BLOB_TYPE_MISMATCH
+    assert mismatches[0].model_field == "files[*]"
+
+
+def test_list_type_mismatch_when_column_not_array(mocker: MockerFixture) -> None:
+    """`list[str]` on the model vs a primitive string column → `TYPE_MISMATCH`."""
+
+    class Model(LatchRecordModel):
+        xs: list[str]
+
+    table = _table(mocker, {"xs": _column(str, "string")})
+
+    mismatches = _validate_table_schema(Model, table, allow_extra_columns=True)
+
+    assert len(mismatches) == 1
+    assert mismatches[0].kind is SchemaMismatchKind.TYPE_MISMATCH
+
+
+def test_nullable_list_happy(mocker: MockerFixture) -> None:
+    """`list[str] | None` on the model ↔ nullable `array<string>` column validates cleanly."""
+
+    class Model(LatchRecordModel):
+        xs: list[str] | None = None
+
+    table = _table(mocker, {"xs": _array_column(str, "string", allow_empty=True)})
 
     assert _validate_table_schema(Model, table, allow_extra_columns=True) == []
