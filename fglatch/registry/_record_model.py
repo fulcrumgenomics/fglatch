@@ -9,6 +9,9 @@ from latch.registry.types import EmptyCell
 from latch.registry.types import InvalidValue
 from pydantic import BaseModel
 
+from fglatch.registry._schema import RegistryTableSchemaError
+from fglatch.registry._schema import _validate_table_schema
+
 logger = logging.getLogger(__name__)
 
 
@@ -119,6 +122,41 @@ class LatchRecordModel(BaseModel):
         out_values["id"] = record.id
 
         return cls.model_validate(out_values)
+
+    @classmethod
+    def validate_table_schema(
+        cls,
+        table_id: str,
+        *,
+        allow_extra_columns: bool = True,
+    ) -> None:
+        """
+        Validate that a Registry table's schema matches this model's declared schema.
+
+        Fetches the table, compares its columns to the model's fields, and raises when
+        they disagree. Intended to be called at startup / in CI to catch schema drift
+        before data-level failures during `from_record`.
+
+        Args:
+            table_id: ID of the Registry table to validate against.
+            allow_extra_columns: If True (default), columns on the table that are not
+                declared on the model are silently accepted. If False, extra columns
+                produce `MISSING_ON_MODEL` mismatches.
+
+        Raises:
+            RegistryTableSchemaError: If the table's schema disagrees with the model's
+                schema. The exception's `mismatches` attribute carries one
+                `SchemaMismatch` per detected disagreement.
+        """
+        # `Table(id=...)` is a lightweight handle; `.load()` populates its columns from
+        # the Registry. The validator below calls `table.get_columns()`, which returns
+        # the empty dict on an un-loaded table — so the network round-trip on `.load()`
+        # is required for the validation to see anything.
+        table = Table(id=table_id)
+        table.load()
+        mismatches = _validate_table_schema(cls, table, allow_extra_columns=allow_extra_columns)
+        if mismatches:
+            raise RegistryTableSchemaError(mismatches)
 
 
 def _safe_table_name(table_id: str) -> str | None:
