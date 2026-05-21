@@ -1,10 +1,12 @@
 from enum import Enum
 from enum import StrEnum
 from typing import TYPE_CHECKING
+from typing import get_args
 
 # TODO: switch to the public re-export once fgmetric promotes these symbols
 # out of `_typing_extensions`.
 from fgmetric._typing_extensions import TypeAnnotation
+from fgmetric._typing_extensions import is_list
 from fgmetric._typing_extensions import is_optional
 from fgmetric._typing_extensions import unpack_optional
 from latch.registry.table import Table
@@ -280,6 +282,9 @@ def _compare_unwrapped(
     if model_type is LatchFile or model_type is LatchDir:
         return _compare_blob(field_name, column_name, model_type, column_type)
 
+    if is_list(model_type):
+        return _compare_list(field_name, column_name, model_type, column_type)
+
     if model_type is column_type:
         return None
 
@@ -371,4 +376,49 @@ def _compare_blob(
         column_name=column_name,
         model_type=model_type,
         column_type=column_type,
+    )
+
+
+def _compare_list(
+    field_name: str,
+    column_name: str,
+    model_type: TypeAnnotation,
+    column_type: TypeAnnotation,
+) -> SchemaMismatch | None:
+    """
+    Compare a `list[T]` model field to a Registry array column.
+
+    Recurses on the element types through `_compare_unwrapped`, so any element kind
+    (primitive, enum, blob, link, or nested list) is handled by the top-level dispatch.
+    Element-level mismatches surface with the inner `kind` and a `[*]`-qualified
+    `model_field`; e.g. `list[MyEnum]` against an `array<enum>` with disagreeing
+    members produces an `ENUM_MEMBER_MISMATCH` with `model_field="xs[*]"`.
+
+    Nullability is validated at the column boundary (`_compare_field_to_column`), not
+    per-element — Registry arrays carry `allowEmpty` on the array itself.
+    """
+    if not is_list(column_type):
+        return SchemaMismatch(
+            kind=SchemaMismatchKind.TYPE_MISMATCH,
+            model_field=field_name,
+            column_name=column_name,
+            model_type=model_type,
+            column_type=column_type,
+        )
+
+    model_args = get_args(model_type)
+    column_args = get_args(column_type)
+    if len(model_args) != 1 or len(column_args) != 1:
+        # Defensive: list[T] always has one arg via get_args, and to_python_type returns
+        # List[T] with one arg. Falls through only on malformed inputs.
+        return SchemaMismatch(
+            kind=SchemaMismatchKind.TYPE_MISMATCH,
+            model_field=field_name,
+            column_name=column_name,
+            model_type=model_type,
+            column_type=column_type,
+        )
+
+    return _compare_unwrapped(
+        f"{field_name}[*]", f"{column_name}[*]", model_args[0], column_args[0]
     )
