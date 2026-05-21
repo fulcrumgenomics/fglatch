@@ -11,6 +11,8 @@ from latch.registry.table import Table
 from latch.registry.types import Column
 from latch.registry.types import EmptyCell
 from latch.registry.upstream_types.types import DBType
+from latch.types.directory import LatchDir
+from latch.types.file import LatchFile
 from pytest_mock import MockerFixture
 
 from fglatch.registry import LatchRecordModel
@@ -29,6 +31,29 @@ def _column(py_type: Any, primitive: _BasicPrimitive, allow_empty: bool = False)
         "type": {"primitive": primitive},
         "allowEmpty": allow_empty,
     }
+    return Column(key="<placeholder>", type=column_type, upstream_type=upstream_type)
+
+
+def _blob_column(node_type: str | None, allow_empty: bool = False) -> Column:
+    """
+    Build a blob Column. `node_type` is set in metadata when non-None.
+
+    Missing metadata or any non-`"dir"` value means the SDK treats the column as
+    `LatchFile`.
+    """
+    python_type: type = LatchDir if node_type == "dir" else LatchFile
+    column_type: Any = Union[python_type, EmptyCell] if allow_empty else python_type
+    upstream_type: DBType
+    if node_type is None:
+        upstream_type = {
+            "type": {"primitive": "blob"},
+            "allowEmpty": allow_empty,
+        }
+    else:
+        upstream_type = {
+            "type": {"primitive": "blob", "metadata": {"nodeType": node_type}},
+            "allowEmpty": allow_empty,
+        }
     return Column(key="<placeholder>", type=column_type, upstream_type=upstream_type)
 
 
@@ -491,5 +516,96 @@ def test_nullable_enum_field_happy(mocker: MockerFixture) -> None:
         mocker,
         {"status": _enum_column(["Alpha", "Beta", "Gamma"], allow_empty=True)},
     )
+
+    assert _validate_table_schema(Model, table, allow_extra_columns=True) == []
+
+
+# Blob tests.
+
+
+def test_latch_file_happy(mocker: MockerFixture) -> None:
+    """`LatchFile` on the model ↔ blob column with nodeType=file validates cleanly."""
+
+    class Model(LatchRecordModel):
+        f: LatchFile
+
+    table = _table(mocker, {"f": _blob_column("file")})
+
+    assert _validate_table_schema(Model, table, allow_extra_columns=True) == []
+
+
+def test_latch_dir_happy(mocker: MockerFixture) -> None:
+    """`LatchDir` on the model ↔ blob column with nodeType=dir validates cleanly."""
+
+    class Model(LatchRecordModel):
+        d: LatchDir
+
+    table = _table(mocker, {"d": _blob_column("dir")})
+
+    assert _validate_table_schema(Model, table, allow_extra_columns=True) == []
+
+
+def test_latch_file_happy_when_metadata_missing(mocker: MockerFixture) -> None:
+    """A blob column with no metadata defaults to LatchFile (matching the SDK)."""
+
+    class Model(LatchRecordModel):
+        f: LatchFile
+
+    table = _table(mocker, {"f": _blob_column(node_type=None)})
+
+    assert _validate_table_schema(Model, table, allow_extra_columns=True) == []
+
+
+def test_blob_type_mismatch_file_on_model_dir_on_column(mocker: MockerFixture) -> None:
+    """LatchFile on model, dir column → `BLOB_TYPE_MISMATCH`."""
+
+    class Model(LatchRecordModel):
+        f: LatchFile
+
+    table = _table(mocker, {"f": _blob_column("dir")})
+
+    mismatches = _validate_table_schema(Model, table, allow_extra_columns=True)
+
+    assert len(mismatches) == 1
+    assert mismatches[0].kind is SchemaMismatchKind.BLOB_TYPE_MISMATCH
+    assert mismatches[0].model_type is LatchFile
+    assert mismatches[0].column_type is LatchDir
+
+
+def test_blob_type_mismatch_dir_on_model_file_on_column(mocker: MockerFixture) -> None:
+    """LatchDir on model, file column → `BLOB_TYPE_MISMATCH`."""
+
+    class Model(LatchRecordModel):
+        d: LatchDir
+
+    table = _table(mocker, {"d": _blob_column("file")})
+
+    mismatches = _validate_table_schema(Model, table, allow_extra_columns=True)
+
+    assert len(mismatches) == 1
+    assert mismatches[0].kind is SchemaMismatchKind.BLOB_TYPE_MISMATCH
+
+
+def test_blob_field_type_mismatch_when_column_not_blob(mocker: MockerFixture) -> None:
+    """Model declares LatchFile but column is a string primitive → `TYPE_MISMATCH`."""
+
+    class Model(LatchRecordModel):
+        f: LatchFile
+
+    table = _table(mocker, {"f": _column(str, "string")})
+
+    mismatches = _validate_table_schema(Model, table, allow_extra_columns=True)
+
+    assert len(mismatches) == 1
+    assert mismatches[0].kind is SchemaMismatchKind.TYPE_MISMATCH
+
+
+def test_nullable_latch_file_happy(mocker: MockerFixture) -> None:
+    """`LatchFile | None` on the model ↔ nullable blob column validates cleanly."""
+
+    class Model(LatchRecordModel):
+        f: LatchFile | None = None
+
+    table = _table(mocker, {"f": _blob_column("file", allow_empty=True)})
 
     assert _validate_table_schema(Model, table, allow_extra_columns=True) == []
