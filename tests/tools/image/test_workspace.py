@@ -1,6 +1,7 @@
 """Tests for the authoritative workspace resolver."""
 
 import logging
+import os
 
 import pytest
 from pytest import MonkeyPatch
@@ -40,6 +41,7 @@ def test_resolve_returns_when_ambient_agrees_or_unset(
     """resolve_workspace() returns the workspace when ambient agrees or unset."""
     _set_ambient(monkeypatch, env=env, config=config)
     assert resolve_workspace(workspace="123456") == "123456"
+    assert os.environ.get("LATCH_WORKSPACE") == env  # pure guard: no env mutation
 
 
 CONFLICTS: dict[str, tuple[str | None, str]] = {
