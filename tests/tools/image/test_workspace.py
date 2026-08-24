@@ -1,5 +1,7 @@
 """Tests for the authoritative workspace resolver."""
 
+import logging
+
 import pytest
 from pytest import MonkeyPatch
 
@@ -59,11 +61,11 @@ def test_resolve_fails_when_ambient_conflicts(
         resolve_workspace(workspace="123456")
 
 
-def test_resolve_never_queries_account_default(monkeypatch: MonkeyPatch) -> None:
-    """Ambient unset must resolve locally, never via a network default query."""
+def test_resolve_warns_and_resolves_locally_when_ambient_unset(
+    monkeypatch: MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Ambient unset resolves locally with a warning, not a network default query."""
     _set_ambient(monkeypatch, env=None, config="")
-    called: list[str] = []
-    # any GraphQL execute during resolution is a bug.
-    monkeypatch.setattr(_workspace, "user_config", _FakeUserConfig(""), raising=True)
-    assert resolve_workspace(workspace="123456") == "123456"
-    assert called == []
+    with caplog.at_level(logging.WARNING, logger="fglatch._tools.image._workspace"):
+        assert resolve_workspace(workspace="123456") == "123456"
+    assert any("no ambient workspace" in record.message.lower() for record in caplog.records)
