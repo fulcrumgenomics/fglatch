@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 def resolve_workspace(*, workspace: str) -> str:
     """
-    Assert `workspace` against ambient config, export it, and return it.
+    Assert `workspace` against ambient config and return it.
 
     Reads the ambient workspace from `$LATCH_WORKSPACE`, then the persisted user
     config. It never falls through to the account-default query, so a caller who has
@@ -35,5 +35,4 @@ def resolve_workspace(*, workspace: str) -> str:
     if ambient is None:
         logger.warning("no ambient workspace configured; proceeding with %s", workspace)
 
-    os.environ["LATCH_WORKSPACE"] = workspace  # pin every downstream call
     return workspace

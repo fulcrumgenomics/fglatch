@@ -34,15 +34,12 @@ AGREES: dict[str, tuple[str | None, str]] = {
 
 
 @pytest.mark.parametrize("env, config", AGREES.values(), ids=AGREES.keys())
-def test_resolve_returns_and_exports_when_ambient_agrees_or_unset(
+def test_resolve_returns_when_ambient_agrees_or_unset(
     monkeypatch: MonkeyPatch, env: str | None, config: str
 ) -> None:
-    """resolve_workspace() returns and exports the workspace when ambient agrees or unset."""
+    """resolve_workspace() returns the workspace when ambient agrees or unset."""
     _set_ambient(monkeypatch, env=env, config=config)
     assert resolve_workspace(workspace="123456") == "123456"
-    import os
-
-    assert os.environ["LATCH_WORKSPACE"] == "123456"  # exported for downstream calls
 
 
 CONFLICTS: dict[str, tuple[str | None, str]] = {
