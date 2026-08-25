@@ -1,4 +1,5 @@
 import logging
+from functools import cached_property
 from typing import Any
 from typing import Self
 
@@ -46,10 +47,18 @@ class LatchRecordModel(BaseModel):
     Attributes:
         id: The unique identifier of the record.
         name: The record's `Name` (primary key) in the Registry table.
+
+    Properties:
+        record: The Latch Registry ``Record`` identified by ``id`` (lazily loaded, cached).
     """
 
     id: str
     name: str
+
+    @cached_property
+    def record(self) -> Record:
+        """The Latch Registry ``Record`` this model identifies, keyed by ``id``."""
+        return Record(id=self.id)
 
     @classmethod
     def from_record(

@@ -324,6 +324,19 @@ def test_from_record_exclude_empty_values_raises_online() -> None:
         Transcript.from_record(record, table_id=transcript_table_id, exclude_empty_values=True)
 
 
+def test_record_returns_a_latch_record_keyed_by_id() -> None:
+    """`.record` exposes the Latch Record for this model's id."""
+    model = LatchRecordModel(id="123", name="sample_1")
+    assert isinstance(model.record, Record)
+    assert model.record.id == "123"
+
+
+def test_record_is_cached() -> None:
+    """`.record` is cached, so repeated access returns the same Record."""
+    model = LatchRecordModel(id="123", name="sample_1")
+    assert model.record is model.record
+
+
 def test_classify_record_values(mocker: MockerFixture) -> None:
     """Test that record values are correctly converted and classified."""
     mock_linked_record = mocker.MagicMock(spec=Record)
