@@ -47,8 +47,6 @@ class LatchRecordModel(BaseModel):
     Attributes:
         id: The unique identifier of the record.
         name: The record's `Name` (primary key) in the Registry table.
-
-    Properties:
         record: The Latch Registry ``Record`` identified by ``id`` (lazily loaded, cached).
     """
 

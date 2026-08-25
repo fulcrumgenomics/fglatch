@@ -337,6 +337,13 @@ def test_record_is_cached() -> None:
     assert model.record is model.record
 
 
+def test_record_is_excluded_from_model_dump() -> None:
+    """The `.record` property is not a field, so it stays out of serialization."""
+    model = LatchRecordModel(id="123", name="sample_1")
+    _ = model.record  # populate the cached_property first
+    assert "record" not in model.model_dump()
+
+
 def test_classify_record_values(mocker: MockerFixture) -> None:
     """Test that record values are correctly converted and classified."""
     mock_linked_record = mocker.MagicMock(spec=Record)
