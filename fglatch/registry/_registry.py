@@ -10,9 +10,9 @@ from pydantic import Field
 
 from fglatch.type_aliases import RecordName
 
-# Scope the query to a single table via `catalogExperiment(id:)`: a name shared across tables cannot
-# leak in, and a missing or forbidden table returns a `null` experiment. Only each record's `id` and
-# `name` are fetched; column values are left to a lazy `get_values()`.
+# Scope to one table via `catalogExperiment(id:)` (a shared name can't leak in; a missing/forbidden
+# table returns `null`). Only each record's `id`/`name` are fetched; values are left to a lazy
+# `get_values()`.
 _QUERY = gql.gql("""
     query ($tableId: BigInt!, $sampleNames: [String!]) {
         catalogExperiment(id: $tableId) {
