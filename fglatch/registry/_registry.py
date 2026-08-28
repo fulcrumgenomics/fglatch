@@ -1,8 +1,8 @@
-from collections import Counter
 from typing import cast
 
 import gql
 from latch.registry.record import Record
+from latch.registry.table import TableNotFoundError
 from latch_sdk_gql import JsonArray
 from latch_sdk_gql.execute import execute
 from pydantic import BaseModel
@@ -10,23 +10,48 @@ from pydantic import Field
 
 from fglatch.type_aliases import RecordName
 
+# Scope the query to a single table via `catalogExperiment(id:)`: a name shared across tables cannot
+# leak in, and a missing or forbidden table returns a `null` experiment. Only each record's `id` and
+# `name` are fetched; column values are left to a lazy `get_values()`.
+_QUERY = gql.gql("""
+    query ($tableId: BigInt!, $sampleNames: [String!]) {
+        catalogExperiment(id: $tableId) {
+            id
+            catalogSamplesByExperimentId(filter: {name: {in: $sampleNames}}) {
+                nodes {
+                    id
+                    name
+                }
+            }
+        }
+    }
+""")
+
 
 class LatchNode(BaseModel):
-    """The gql query below returns {'catalogSamples': {'nodes': [{'id': int}]}}."""
+    """A record node (`id` and `name`) from the query response."""
 
-    id: int
+    id: str
+    name: str
 
 
 class CatalogSamples(BaseModel):
-    """The gql query below returns {'catalogSamples': {'nodes': [{'id': int}]}}."""
+    """The `catalogSamplesByExperimentId` connection of matching record nodes."""
 
     nodes: list[LatchNode]
 
 
-class CatalogSamplesQueryResponse(BaseModel):
-    """The gql query below returns {'catalogSamples': {'nodes': [{'id': int}]}}."""
+class CatalogExperiment(BaseModel):
+    """The queried `catalogExperiment` (i.e. the table)."""
 
-    catalog_samples: CatalogSamples = Field(alias="catalogSamples")
+    id: str
+    catalog_samples: CatalogSamples = Field(alias="catalogSamplesByExperimentId")
+
+
+class CatalogSamplesQueryResponse(BaseModel):
+    """The GQL response: a `catalogExperiment`, or `null` when the table is unavailable."""
+
+    catalog_experiment: CatalogExperiment | None = Field(alias="catalogExperiment")
 
 
 def query_latch_records_by_name(
@@ -36,67 +61,74 @@ def query_latch_records_by_name(
     table_id: str,
 ) -> dict[RecordName, Record]:
     """
-    Fetch a set of Latch Registry records by their names.
+    Fetch Latch Registry records by name from a single table.
 
-    By default, the query is performed across *all* tables in the Registry. If a table ID is
-    provided, only records from the specified table will be included in the response.
+    The query is scoped to `table_id` server-side, so only records from that table are returned.
+    Each returned `Record` has its name and table ID primed, so `get_name()` and `get_table_id()`
+    are cache hits (no network request). Column values are not primed: the first `get_values()` on
+    a record loads them lazily. `LatchRecordModel.from_record()` reads and validates the values.
 
     Args:
-        record_names: A record name or a list of record names in the Latch Registry.
-        table_id: An optional table ID. If provided, only records from this table will be included
-            in the returned dictionary.
+        record_names: A record name, or a list of record names (duplicates are ignored), in the
+            Latch Registry.
+        table_id: The ID of the table that contains the records.
+
+    Returns:
+        A mapping from record name to the corresponding `Record`. Empty if `record_names` is empty.
 
     Raises:
-        ValidationError: If the GQL response can't be validated.
+        ValidationError: If the GQL response cannot be validated.
+        TableNotFoundError: If no table with `table_id` exists in, or is accessible from, the active
+            workspace.
         ValueError: If no record is found for a requested name.
-        ValueError: If multiple records are found with the same name. (Names should be unique within
-            a table, so this should only happen if there are name collisions _across_ Registry
-            tables. Requiring a `table_id` is intended to avoid this, and this error is not
-            expected to be raised in practice.)
+        ValueError: If the table contains more than one record with the same name.
     """
     if isinstance(record_names, str):
         record_names = [record_names]
 
-    # The `variables` argument to `execute()` is typed to receive a dict with `JsonValue` values.
-    # `list[str]` matches `JsonValue` semantically, but mypy has limitations with recursive type
-    # aliases containing forward references. In this case, it can't infer that `list[str]` satisfies
-    # the `JsonArray = list[JsonValue]` member of the `JsonValue` union since `JsonValue` and
-    # `JsonArray` circularly reference each other. The cast works around this limitation.
+    if len(record_names) == 0:
+        return {}
+
+    # `list[str]` satisfies `JsonArray = list[JsonValue]` semantically, but mypy cannot infer it
+    # through the mutually-recursive `JsonValue` union; the cast works around that limitation.
     sample_names: JsonArray = cast(JsonArray, record_names)
 
-    data = execute(
-        document=gql.gql("""
-            query Query($sampleNames:[String!]) {
-                catalogSamples(filter: {name: {in: $sampleNames}}) {
-                    nodes {
-                    id
-                    name
-                    }
-                }
-            }
-            """),
-        variables={"sampleNames": sample_names},
-    )
-
+    data = execute(document=_QUERY, variables={"tableId": table_id, "sampleNames": sample_names})
     response = CatalogSamplesQueryResponse.model_validate(data)
-    records: list[Record] = [Record(str(k.id)) for k in response.catalog_samples.nodes]
 
-    # Filter to records from the specified table.
-    records = [r for r in records if r.get_table_id() == table_id]
+    if response.catalog_experiment is None:
+        raise TableNotFoundError(
+            f"Could not retrieve table id={table_id}.\n"
+            "Check that the table ID is correct and that you can access it in the active workspace."
+        )
 
-    name_counts: Counter[RecordName] = Counter(record.get_name() for record in records)
+    record_map: dict[RecordName, Record] = {}
+    for node in response.catalog_experiment.catalog_samples.nodes:
+        name: RecordName = node.name
+        if name in record_map:
+            # Names are unique within a table by Latch's constraint; this guards data integrity so a
+            # violation raises rather than silently overwriting one record with another.
+            raise ValueError(
+                f"Multiple records named {name!r} found in table id={table_id}. "
+                "Record names must be unique within a table."
+            )
 
-    errs: list[str] = []
-    for record_name in record_names:
-        count: int = name_counts[record_name]
-        if count == 0:
-            errs.append(f"No record found with name: {record_name}")
-        elif count > 1:
-            errs.append(f"Duplicate record name: {record_name} (n={count})")
+        record = Record(node.id)
+        # Prime name and table_id from the response so these getters skip a round trip. `table_id`
+        # uses `experiment.id` — the same source `Record.load()` reads it from — so a later lazy
+        # load leaves it unchanged. Mutating the SDK-internal `Record._cache` (a non-frozen cache on
+        # the frozen `Record`) is what `Table.list_records()` does for `name`; the offline priming
+        # test guards the field names in CI.
+        record._cache.name = name
+        record._cache.table_id = response.catalog_experiment.id
 
-    if errs:
-        raise ValueError("Could not find unique records for queried names" + "\n".join(errs))
+        record_map[name] = record
 
-    record_map: dict[RecordName, Record] = {record.get_name(): record for record in records}
+    missing: list[RecordName] = [name for name in record_names if name not in record_map]
+    if missing:
+        raise ValueError(
+            "Could not find records for the queried names:\n"
+            + "\n".join(f"No record found with name: {name}" for name in missing)
+        )
 
     return record_map
