@@ -3,11 +3,10 @@ from pathlib import Path
 from typing import Final
 
 import pytest
-import requests
 from latch.registry.table import Table
-from latch_sdk_config.latch import config
 from latch_sdk_config.user import user_config
 
+from fglatch._client.latch_client import LatchClient
 from tests.constants import MOCK_TABLE_1_ID
 
 FULCRUM_WORKSPACE_NAME: Final[str] = "Fulcrum Genomics"
@@ -38,16 +37,10 @@ def _latch_api_is_available() -> bool:
         )
         return False
 
+    # Probe the same REST endpoint the online tests depend on.
     try:
-        resp = requests.post(
-            url=config.api.user.list_workspaces,
-            headers={"Authorization": f"Bearer {user_config.token}"},
-            json={"ws_account_id": user_config.workspace_id},
-        )
-
-        resp.raise_for_status()
-
-    except requests.HTTPError:
+        LatchClient().get_executions()
+    except Exception:
         return False
 
     return True
