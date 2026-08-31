@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
@@ -357,3 +358,74 @@ def test_classify_record_values(mocker: MockerFixture) -> None:
 
     assert len(empty_cells) == 1
     assert empty_cells[0] == "experiment_id"
+
+
+@pytest.mark.parametrize(
+    ("link_names", "expected_name", "get_name_called"),
+    [
+        pytest.param(None, "DNA123/seq_abc", True, id="no-mapping-uses-get_name"),
+        pytest.param({"123": "resolved"}, "resolved", False, id="mapping-hit-skips-get_name"),
+        pytest.param({"999": "other"}, "DNA123/seq_abc", True, id="mapping-miss-falls-back"),
+    ],
+)
+def test_classify_record_values_link_names(
+    mocker: MockerFixture,
+    link_names: Mapping[str, str] | None,
+    expected_name: str,
+    get_name_called: bool,
+) -> None:
+    """A link's name comes from link_names when its ID is present, else from network get_name()."""
+    mock_linked_record = mocker.MagicMock(spec=Record)
+    mock_linked_record.id = "123"
+    mock_linked_record.get_name.return_value = "DNA123/seq_abc"
+
+    converted, _, _ = _classify_record_values(
+        {"sequence": mock_linked_record}, link_names=link_names
+    )
+
+    assert converted["sequence"] == LatchRecordModel(id="123", name=expected_name)
+    if get_name_called:
+        mock_linked_record.get_name.assert_called_once()
+    else:
+        mock_linked_record.get_name.assert_not_called()
+
+
+def test_classify_record_values_link_names_ignored_for_non_links(mocker: MockerFixture) -> None:
+    """link_names is only consulted for linked records, not scalar/invalid/empty values."""
+    link_names = mocker.MagicMock(spec=dict)
+
+    mock_invalid = mocker.MagicMock(spec=InvalidValue)
+    mock_invalid.raw_value = "not_a_float"
+    mock_empty_cell = mocker.MagicMock(spec=EmptyCell)
+
+    values: dict[str, Any] = {
+        "sample_name": "my_sample",
+        "concentration": mock_invalid,
+        "experiment_id": mock_empty_cell,
+    }
+
+    converted, _, _ = _classify_record_values(values, link_names=link_names)
+
+    link_names.get.assert_not_called()
+    assert converted["sample_name"] == "my_sample"
+
+
+def test_from_record_threads_link_names(mocker: MockerFixture) -> None:
+    """from_record passes link_names through to link resolution, keyed on the linked record's ID."""
+
+    class Transcript(LatchRecordModel):
+        gene: LatchRecordModel
+
+    mock_gene = mocker.MagicMock(spec=Record)
+    mock_gene.id = "999"
+    mock_gene.get_name.return_value = "network_name"
+
+    mock_record = mocker.MagicMock(spec=Record)
+    mock_record.id = "1"
+    mock_record.get_name.return_value = "ENST1"
+    mock_record.get_values.return_value = {"gene": mock_gene}
+
+    transcript = Transcript.from_record(mock_record, link_names={"999": "cached_name"})
+
+    assert transcript.gene == LatchRecordModel(id="999", name="cached_name")
+    mock_gene.get_name.assert_not_called()

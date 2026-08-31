@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Mapping
 from typing import Any
 from typing import Self
 
@@ -58,6 +59,8 @@ class LatchRecordModel(BaseModel):
         table_id: str | None = None,
         exclude_empty_values: bool = False,
         exclude_invalid_values: bool = False,
+        *,
+        link_names: Mapping[str, str] | None = None,
     ) -> Self:
         """
         Create a validated model instance from a Latch Registry Record.
@@ -72,6 +75,10 @@ class LatchRecordModel(BaseModel):
                 prior to validation and a warning is logged.
             exclude_invalid_values: If True, record attributes with value `InvalidValue` are
                 excluded prior to validation and a warning is logged.
+            link_names: An optional mapping from a linked record's ID to its name. If an ID is
+                present, its name is used; if it is absent, the name is fetched with a network
+                `get_name()` lookup. Resolving names locally (e.g. from records already fetched)
+                avoids a per-link round-trip.
 
         Returns:
             A validated instance of the model with all field data populated.
@@ -87,7 +94,9 @@ class LatchRecordModel(BaseModel):
 
         # Convert a Record to a dictionary.
         record_name: str = record.get_name()
-        converted_values, invalid_values, empty_cells = _classify_record_values(record.get_values())
+        converted_values, invalid_values, empty_cells = _classify_record_values(
+            record.get_values(), link_names=link_names
+        )
 
         if len(invalid_values) > 0:
             invalid_value_fields: str = "\n".join(
@@ -167,12 +176,15 @@ def _validate_source_table(record: Record, table_id: str) -> None:
 
 def _classify_record_values(
     values: dict[str, Any],
+    link_names: Mapping[str, str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
     """
     Classify record values into converted values, invalid raw values, and empty-cell keys.
 
     Args:
       values: A dictionary mapping keys to values from a LatchRecord.
+      link_names: An optional mapping from a linked record's ID to its name. IDs present in the
+          mapping are resolved locally; missing IDs fall back to a network `get_name()` lookup.
 
     Returns:
         A tuple of (converted, invalid, empty), where:
@@ -194,7 +206,15 @@ def _classify_record_values(
             empty.append(key)
             converted[key] = value
         elif isinstance(value, Record):
-            converted[key] = LatchRecordModel(id=value.id, name=value.get_name())
+            name = link_names.get(value.id) if link_names is not None else None
+            if name is None:
+                if link_names is not None:
+                    logger.debug(
+                        f"Linked record id={value.id} not in link_names; "
+                        "fetching its name from the network."
+                    )
+                name = value.get_name()
+            converted[key] = LatchRecordModel(id=value.id, name=name)
         else:
             converted[key] = value
 
