@@ -1,4 +1,5 @@
 import pytest
+from graphql import print_ast
 from latch.registry.record import Record
 from latch.registry.table import Table
 from latch.registry.table import TableNotFoundError
@@ -7,6 +8,7 @@ from pytest_mock import MockerFixture
 
 from fglatch.registry import LatchRecordModel
 from fglatch.registry import query_latch_records_by_name
+from fglatch.registry._registry import _QUERY
 from fglatch.type_aliases import RecordName
 from tests.constants import MOCK_TABLE_1_ID
 
@@ -146,6 +148,20 @@ def test_query_latch_records_by_name_offline_scopes_query_to_table(mocker: Mocke
         "tableId": FAKE_TABLE_ID,
         "sampleNames": ["r"],
     }
+
+
+def test_query_latch_records_by_name_query_filters_out_removed_records() -> None:
+    """
+    The query must exclude soft-deleted records so a live-unique name is not a false duplicate.
+
+    Latch's name-uniqueness constraint holds only over live records, but
+    `catalogSamplesByExperimentId` returns removed records too. A name that is unique among the
+    live records can still have several soft-deleted records with the same name; without this
+    filter the dedup guard would raise for such a name. The filter lives in the query document
+    (server-side), so this guards the document rather than a mocked response.
+    """
+    printed = print_ast(_QUERY)
+    assert "removed: {equalTo: false}" in printed
 
 
 def test_query_latch_records_by_name_offline_empty_input_returns_empty_without_query(

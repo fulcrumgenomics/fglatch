@@ -11,13 +11,18 @@ from pydantic import Field
 from fglatch.type_aliases import RecordName
 
 # Scope to one table via `catalogExperiment(id:)` (a shared name can't leak in; a missing/forbidden
-# table returns `null`). Only each record's `id`/`name` are fetched; values are left to a lazy
-# `get_values()`.
+# table returns `null`). Filter out soft-deleted records with `removed: {equalTo: false}`: Latch's
+# name-uniqueness constraint holds only over live records, but `catalogSamplesByExperimentId`
+# returns removed records too, so an unfiltered query can surface several same-named records for a
+# name that is unique among the live ones. Only each record's `id`/`name` are fetched; values are
+# left to a lazy `get_values()`.
 _QUERY = gql.gql("""
     query ($tableId: BigInt!, $sampleNames: [String!]) {
         catalogExperiment(id: $tableId) {
             id
-            catalogSamplesByExperimentId(filter: {name: {in: $sampleNames}}) {
+            catalogSamplesByExperimentId(
+                filter: {name: {in: $sampleNames}, removed: {equalTo: false}}
+            ) {
                 nodes {
                     id
                     name
@@ -106,8 +111,9 @@ def query_latch_records_by_name(
     for node in response.catalog_experiment.catalog_samples.nodes:
         name: RecordName = node.name
         if name in record_map:
-            # Names are unique within a table by Latch's constraint; this guards data integrity so a
-            # violation raises rather than silently overwriting one record with another.
+            # Names are unique among the live records in a table by Latch's constraint (the query
+            # filters out removed records). This guards data integrity so a violation raises rather
+            # than silently overwriting one record with another.
             raise ValueError(
                 f"Multiple records named {name!r} found in table id={table_id}. "
                 "Record names must be unique within a table."
