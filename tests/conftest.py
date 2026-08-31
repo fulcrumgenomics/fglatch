@@ -4,9 +4,9 @@ from typing import Final
 
 import pytest
 from latch.registry.table import Table
-from latch.utils import get_workspaces
 from latch_sdk_config.user import user_config
 
+from fglatch._client.latch_client import LatchClient
 from tests.constants import MOCK_TABLE_1_ID
 
 FULCRUM_WORKSPACE_NAME: Final[str] = "Fulcrum Genomics"
@@ -37,8 +37,9 @@ def _latch_api_is_available() -> bool:
         )
         return False
 
+    # Probe the same REST endpoint the online tests depend on.
     try:
-        get_workspaces()
+        LatchClient().get_executions()
     except Exception:
         return False
 
