@@ -1,11 +1,28 @@
+from datetime import datetime
+from typing import Any
+
 import pytest
+from latch.registry.record import Record
+from latch.registry.record import _Cache
+from latch.types.directory import LatchDir
+from latch.types.file import LatchFile
 from latch.types.utils import format_path
 from latch.types.utils import old_style_path
 from pytest_mock import MockerFixture
 
 from fglatch.ldata._node_paths import _format_node_path
 from fglatch.ldata._node_paths import _OldStylePathKey
+from fglatch.ldata._node_paths import _prime_file_paths
 from fglatch.ldata._node_paths import resolve_node_paths
+
+
+def _cache_with_values(*, name: str, values: dict[str, Any]) -> _Cache:
+    """A `_Cache` shaped like `Table.list_records` output, with the given values."""
+    now = datetime(2024, 1, 1)
+    return _Cache(
+        table_id="1", name=name, creation_time=now, last_updated=now, columns={}, values=values
+    )
+
 
 # Each SDK `ldataGetPath` shape, its `ldataOwner`, and the readable path `format_path` produces.
 # `mount_gcp`/`mount_azure` resolve to `.mount`: the SDK's unanchored `old_style_path` regex lets
@@ -133,3 +150,40 @@ def test_resolve_node_paths_collects_and_raises_all_chunk_errors(mocker: MockerF
     message = str(excinfo.value)
     assert "boom-2" in message
     assert "boom-3" in message
+
+
+def test_prime_file_paths_rewrites_scalar_and_list_cells(mocker: MockerFixture) -> None:
+    """File/dir cells (scalar and in a list) are rewritten in place from the resolved paths."""
+    record = Record("1")
+    object.__setattr__(
+        record,
+        "_cache",
+        _cache_with_values(
+            name="r", values={"f": LatchFile("latch://1.node"), "fs": [LatchDir("latch://2.node")]}
+        ),
+    )
+    mocker.patch(
+        "fglatch.ldata._node_paths.execute",
+        return_value={"p0": "mount/b/a.txt", "o0": None, "p1": "mount/b/d", "o1": None},
+    )
+
+    _prime_file_paths([record])
+
+    values = record.get_values(load_if_missing=False)
+    assert values is not None
+    scalar, listed = values["f"], values["fs"]
+    assert isinstance(scalar, LatchFile)
+    assert isinstance(listed, list) and isinstance(listed[0], LatchDir)
+    assert scalar.remote_path == "latch://b.mount/a.txt"
+    assert listed[0].remote_path == "latch://b.mount/d"
+
+
+def test_prime_file_paths_no_files_makes_no_query(mocker: MockerFixture) -> None:
+    """With no file cells, no node-path query is issued."""
+    record = Record("1")
+    object.__setattr__(record, "_cache", _cache_with_values(name="r", values={"n": 3}))
+    execute_mock = mocker.patch("fglatch.ldata._node_paths.execute")
+
+    _prime_file_paths([record])
+
+    execute_mock.assert_not_called()
