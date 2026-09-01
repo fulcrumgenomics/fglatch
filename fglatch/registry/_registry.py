@@ -1,4 +1,5 @@
 from collections import Counter
+from collections.abc import Mapping
 from typing import Any
 from typing import cast
 
@@ -254,6 +255,59 @@ _RECORDS_WITH_VALUES_QUERY = gql.gql("""
 """Additionally fetch each record's column definitions and values so they can be preloaded."""
 
 
+_RECORDS_BY_ID_QUERY = gql.gql("""
+    query Query($ids: [BigInt!]) {
+        catalogSamples(filter: {id: {in: $ids}}) {
+            nodes {
+                id
+                name
+                experiment {
+                    id
+                }
+            }
+        }
+    }
+""")
+"""Fetch id, name, and owning table id for a set of records identified by id."""
+
+
+def _preload_linked_record_names(records: Mapping[RecordName, Record]) -> None:
+    """
+    Preload the names of records linked from `records`' values, in a single query.
+
+    A link-column value is a `Record` with only its id populated. This resolves all linked records
+    at once and preloads each one's name.
+
+    Args:
+        records: The records whose values may contain linked records.
+    """
+    linked: dict[str, Record] = {}
+    for record in records.values():
+        # load_if_missing=False respects the user's choice of `load_values`.
+        values = record.get_values(load_if_missing=False)
+        if values is None:
+            continue
+
+        for value in values.values():
+            if isinstance(value, Record):
+                linked[value.id] = value
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, Record):
+                        linked[item.id] = item
+
+    if not linked:
+        return
+
+    data = execute(
+        document=_RECORDS_BY_ID_QUERY,
+        variables={"ids": cast(JsonArray, list(linked))},
+    )
+    response = CatalogSamplesQueryResponse.model_validate(data)
+    for node in response.catalog_samples.nodes:
+        object.__setattr__(linked[str(node.id)], "_cache", node.to_cache())
+
+
 def query_latch_records_by_name(
     record_names: str | list[str],
     /,
@@ -330,5 +384,8 @@ def query_latch_records_by_name(
 
     if query_errs or value_errs:
         raise ValueError("Could not query records by name:\n" + "\n".join(query_errs + value_errs))
+
+    if load_values:
+        _preload_linked_record_names(records)
 
     return records
