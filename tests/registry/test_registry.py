@@ -304,7 +304,7 @@ def test_query_latch_records_by_name_load_values_collects_conversion_errors(
     }
     mocker.patch("fglatch.registry._registry.execute", return_value=response)
 
-    with pytest.raises(ValueError, match="Failed to load values") as excinfo:
+    with pytest.raises(ValueError, match="Could not query records by name") as excinfo:
         query_latch_records_by_name(["name_1", "name_2"], table_id="999", load_values=True)
 
     assert "name_1" in str(excinfo.value)

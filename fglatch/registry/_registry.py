@@ -328,14 +328,7 @@ def query_latch_records_by_name(
         except (RegistryTransformerException, NoSuchColumnError) as error:
             value_errs.append(f"{node.name} (id={node.id}): {error}")
 
-    messages: list[str] = []
-    if query_errs:
-        messages.append(
-            "Could not find unique records for queried names:\n" + "\n".join(query_errs)
-        )
-    if value_errs:
-        messages.append("Failed to load values for records:\n" + "\n".join(value_errs))
-    if messages:
-        raise ValueError("\n\n".join(messages))
+    if query_errs or value_errs:
+        raise ValueError("Could not query records by name:\n" + "\n".join(query_errs + value_errs))
 
     return records
