@@ -210,7 +210,9 @@ class CatalogSamplesQueryResponse(_FrozenModel):
 
 # `removed: {equalTo: false}` excludes soft-deleted records: Latch's name-uniqueness constraint
 # holds only over live records, so an unfiltered query can return several same-named records for a
-# name that is unique among the live ones (a spurious duplicate).
+# name that is unique among the live ones (a spurious duplicate). `removed` is NOT NULL (the SDK
+# filters experiments the same way, `registry/project.py` `condition: {removed: false}`), so exact
+# `equalTo: false` keeps every live record.
 _RECORDS_QUERY = gql.gql("""
     query Query($sampleNames: [String!]) {
         catalogSamples(filter: {name: {in: $sampleNames}, removed: {equalTo: false}}) {
@@ -311,6 +313,8 @@ def _preload_linked_record_names(records: Mapping[RecordName, Record]) -> None:
     )
     response = CatalogSamplesQueryResponse.model_validate(data)
     for node in response.catalog_samples.nodes:
+        # Instances of one id share a cache: same record, so identical data, and a later lazy load
+        # through any instance repopulates the shared cache for all of them.
         cache = node.to_cache()
         for record in linked.get(str(node.id), []):
             object.__setattr__(record, "_cache", cache)

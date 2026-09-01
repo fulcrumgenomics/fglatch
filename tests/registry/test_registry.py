@@ -15,6 +15,7 @@ from pytest_mock import MockerFixture
 from fglatch.registry import LatchRecordModel
 from fglatch.registry import list_table_records
 from fglatch.registry import query_latch_records_by_name
+from fglatch.registry._registry import _RECORDS_BY_ID_QUERY
 from fglatch.registry._registry import _RECORDS_QUERY
 from fglatch.registry._registry import _RECORDS_WITH_VALUES_QUERY
 from fglatch.registry._registry import LatchNode
@@ -192,9 +193,15 @@ def test_query_latch_records_by_name_raises_if_response_cannot_be_validated(
     "query", [_RECORDS_QUERY, _RECORDS_WITH_VALUES_QUERY], ids=["light", "with-values"]
 )
 def test_by_name_queries_exclude_soft_deleted_records(query: DocumentNode) -> None:
-    """Both by-name queries filter out removed records, which can collide on a live name."""
+    """Both by-name queries carry the removed-filter clause (a structural guard, not end-to-end)."""
     normalized = "".join(print_ast(query).split())
     assert "removed:{equalTo:false}" in normalized
+
+
+def test_by_id_query_does_not_filter_removed() -> None:
+    """By-id is keyed on unique ids, so a soft-deleted linked target is still name-primed."""
+    normalized = "".join(print_ast(_RECORDS_BY_ID_QUERY).split())
+    assert "removed" not in normalized
 
 
 @pytest.fixture
@@ -462,16 +469,23 @@ def test_query_latch_records_by_name_primes_shared_linked_id_across_records(
     id_response = {
         "catalogSamples": {"nodes": [{"id": 123, "name": "seq_a", "experiment": {"id": 555}}]}
     }
-    mocker.patch("fglatch.registry._registry.execute", side_effect=[values_response, id_response])
+    mock_execute = mocker.patch(
+        "fglatch.registry._registry.execute", side_effect=[values_response, id_response]
+    )
 
     records = query_latch_records_by_name(["name_1", "name_2"], table_id="999", load_values=True)
 
+    links: list[Record] = []
     for name in ("name_1", "name_2"):
         values = records[name].get_values(load_if_missing=False)
         assert values is not None
         link = values["seq"]
         assert isinstance(link, Record)
-        assert link.get_name(load_if_missing=False) == "seq_a"  # both primed — no lazy load
+        assert link.get_name(load_if_missing=False) == "seq_a"  # primed — no lazy load
+        links.append(link)
+
+    assert links[0] is not links[1]  # distinct instances of the same id, each primed
+    assert mock_execute.call_count == 2  # values query + one id query, no lazy fallback
 
 
 class MockRecord(LatchRecordModel):
