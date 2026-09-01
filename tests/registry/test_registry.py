@@ -1,6 +1,7 @@
 from typing import Any
 
 import pytest
+from dateutil.parser import isoparse
 from latch.registry.record import NoSuchColumnError
 from latch.registry.record import Record
 from latch.registry.table import Table
@@ -457,3 +458,40 @@ def test_cache_from_catalog_sample_raises_on_datum_without_definition(
 
     with pytest.raises(NoSuchColumnError):
         _cache_from_catalog_sample(node)
+
+
+def _values_node_with_timestamps(creation_time: str, event_times: list[str]) -> dict[str, Any]:
+    """A minimal values-query node (no columns) carrying a creation time and event times."""
+    return {
+        "id": 1,
+        "name": "r",
+        "creationTime": creation_time,
+        "catalogEventsBySampleId": {"nodes": [{"time": t} for t in event_times]},
+        "experiment": {
+            "id": 999,
+            "catalogExperimentColumnDefinitionsByExperimentId": {"nodes": []},
+        },
+        "catalogSampleColumnDataBySampleId": {"nodes": []},
+    }
+
+
+def test_cache_from_catalog_sample_primes_timestamps() -> None:
+    """It primes creation_time and last_updated from the latest event, per `Record.load()`."""
+    node = LatchNode.model_validate(
+        _values_node_with_timestamps("2024-01-01T00:00:00+00:00", ["2024-06-01T12:00:00+00:00"])
+    )
+
+    cache = _cache_from_catalog_sample(node)
+
+    assert cache.creation_time == isoparse("2024-01-01T00:00:00+00:00")
+    assert cache.last_updated == isoparse("2024-06-01T12:00:00+00:00")
+
+
+def test_cache_from_catalog_sample_last_updated_falls_back_to_creation_time() -> None:
+    """With no events, last_updated falls back to creation_time, matching `Record.load()`."""
+    node = LatchNode.model_validate(_values_node_with_timestamps("2024-01-01T00:00:00+00:00", []))
+
+    cache = _cache_from_catalog_sample(node)
+
+    assert cache.creation_time == isoparse("2024-01-01T00:00:00+00:00")
+    assert cache.last_updated == cache.creation_time

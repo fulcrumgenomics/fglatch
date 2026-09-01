@@ -3,6 +3,7 @@ from typing import Any
 from typing import cast
 
 import gql
+from dateutil.parser import isoparse
 from latch.registry.record import NoSuchColumnError
 from latch.registry.record import Record
 from latch.registry.record import _Cache
@@ -59,6 +60,22 @@ class ColumnData(BaseModel):
     nodes: list[ColumnDatum]
 
 
+class CatalogEvent(BaseModel):
+    """A single catalog event for a record (e.g. an update), carrying its timestamp."""
+
+    model_config = ConfigDict(frozen=True)
+
+    time: str
+
+
+class CatalogEvents(BaseModel):
+    """The most recent catalog events for a record."""
+
+    model_config = ConfigDict(frozen=True)
+
+    nodes: list[CatalogEvent]
+
+
 class Experiment(BaseModel):
     """The experiment (i.e. Registry table) that a catalog sample belongs to."""
 
@@ -71,7 +88,7 @@ class Experiment(BaseModel):
 
 
 class LatchNode(BaseModel):
-    """A `catalogSample` node: a record's id, name, table id, and (optionally) its column values."""
+    """A `catalogSample` node: id, name, table id, and (optionally) values and timestamps."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -79,6 +96,8 @@ class LatchNode(BaseModel):
     name: str
     experiment: Experiment
     column_data: ColumnData | None = Field(default=None, alias="catalogSampleColumnDataBySampleId")
+    creation_time: str | None = Field(default=None, alias="creationTime")
+    events: CatalogEvents | None = Field(default=None, alias="catalogEventsBySampleId")
 
 
 class CatalogSamples(BaseModel):
@@ -119,6 +138,12 @@ _RECORDS_WITH_VALUES_QUERY = gql.gql("""
             nodes {
                 id
                 name
+                creationTime
+                catalogEventsBySampleId(orderBy: TIME_DESC, first: 1) {
+                    nodes {
+                        time
+                    }
+                }
                 experiment {
                     id
                     catalogExperimentColumnDefinitionsByExperimentId {
@@ -225,7 +250,8 @@ def _cache_from_catalog_sample(node: LatchNode) -> _Cache:
             fetched by the values query).
 
     Returns:
-        A `_Cache` populated with the record's name, table id, columns, and converted values.
+        A `_Cache` populated with the record's name, table id, timestamps, columns, and converted
+        values.
 
     Raises:
         RuntimeError: If the node lacks column definitions or column data (i.e. it came from the
@@ -267,9 +293,19 @@ def _cache_from_catalog_sample(node: LatchNode) -> _Cache:
 
         values[key] = None
 
+    # Timestamps mirror `Record.load()`: last_updated defaults to the creation time and is replaced
+    # by the most recent event's time when one exists. (The values query always returns these, but
+    # guard against their absence so the transform is robust to a lighter response.)
+    creation_time = isoparse(node.creation_time) if node.creation_time is not None else None
+    last_updated = creation_time
+    if node.events is not None and len(node.events.nodes) > 0:
+        last_updated = isoparse(node.events.nodes[0].time)
+
     return _Cache(
         table_id=str(node.experiment.id),
         name=node.name,
+        creation_time=creation_time,
+        last_updated=last_updated,
         columns=columns,
         values=values,
     )
