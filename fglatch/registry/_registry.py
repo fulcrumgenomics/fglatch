@@ -400,8 +400,9 @@ def list_table_records(
     Fetch every record in a table with linked-record names and file/dir paths primed.
 
     Enumerates the table, then resolves and installs onto each record's cache the two remaining
-    per-cell round-trip sources, so a downstream `from_record`/serializer makes no network request:
-    linked-record names and file/dir readable paths.
+    per-cell round-trip sources, so a downstream `from_record`/serializer makes no network request
+    for resolvable cells: linked-record names and file/dir readable paths. A file cell whose node
+    cannot be resolved keeps its raw `latch://<id>.node` path (and would still round-trip).
 
     Args:
         table_id: The ID of the table to fetch records from.
@@ -410,11 +411,17 @@ def list_table_records(
 
     Returns:
         A mapping from record name to a fully-primed `Record`.
+
+    Raises:
+        ValueError: If two records in the table share a name.
     """
     records: dict[RecordName, Record] = {}
     for page in Table(id=table_id).list_records(page_size=page_size):
         for record in page.values():
-            records[record.get_name()] = record
+            name = record.get_name()
+            if name in records:
+                raise ValueError(f"Duplicate record name: {name} in table {table_id}")
+            records[name] = record
 
     _preload_linked_record_names(records)
     _prime_file_paths(records.values(), chunk_size=chunk_size)

@@ -1,11 +1,9 @@
-from datetime import datetime
 from typing import Any
 
 import pytest
 from dateutil.parser import isoparse
 from latch.registry.record import NoSuchColumnError
 from latch.registry.record import Record
-from latch.registry.record import _Cache
 from latch.registry.table import Table
 from latch.types.file import LatchFile
 from pydantic import ValidationError
@@ -17,15 +15,8 @@ from fglatch.registry import query_latch_records_by_name
 from fglatch.registry._registry import LatchNode
 from fglatch.registry._registry import _preload_linked_record_names
 from fglatch.type_aliases import RecordName
+from tests.conftest import cache_with_values
 from tests.constants import MOCK_TABLE_1_ID
-
-
-def _cache_with_values(*, name: str, values: dict[str, Any]) -> _Cache:
-    """A `_Cache` shaped like `Table.list_records` output, with the given values."""
-    now = datetime(2024, 1, 1)
-    return _Cache(
-        table_id="1", name=name, creation_time=now, last_updated=now, columns={}, values=values
-    )
 
 
 @pytest.mark.requires_latch_registry
@@ -661,7 +652,7 @@ def test_list_table_records_primes_links_and_files(mocker: MockerFixture) -> Non
     object.__setattr__(
         record,
         "_cache",
-        _cache_with_values(name="r", values={"seq": link, "f": LatchFile("latch://9.node")}),
+        cache_with_values(name="r", values={"seq": link, "f": LatchFile("latch://9.node")}),
     )
     mocker.patch(
         "fglatch.registry._registry.Table.list_records", return_value=iter([{"1": record}])
@@ -686,3 +677,41 @@ def test_list_table_records_primes_links_and_files(mocker: MockerFixture) -> Non
     assert isinstance(file_cell, LatchFile)
     assert seq.get_name(load_if_missing=False) == "seq_a"
     assert file_cell.remote_path == "latch://b.mount/a.txt"
+
+
+def test_list_table_records_consumes_all_pages(mocker: MockerFixture) -> None:
+    """Records from every page are returned, name-keyed."""
+    page_1 = {"1": Record("1")}
+    page_2 = {"2": Record("2")}
+    for record_id, page in (("1", page_1), ("2", page_2)):
+        object.__setattr__(
+            page[record_id], "_cache", cache_with_values(name=f"r{record_id}", values={})
+        )
+    mocker.patch(
+        "fglatch.registry._registry.Table.list_records", return_value=iter([page_1, page_2])
+    )
+
+    records = list_table_records("999")
+
+    assert set(records) == {"r1", "r2"}
+
+
+def test_list_table_records_empty_table_returns_empty(mocker: MockerFixture) -> None:
+    """A table with no records returns an empty mapping."""
+    mocker.patch("fglatch.registry._registry.Table.list_records", return_value=iter([]))
+
+    assert list_table_records("999") == {}
+
+
+def test_list_table_records_raises_on_duplicate_name(mocker: MockerFixture) -> None:
+    """Two records sharing a name raise rather than silently dropping one."""
+    dup_a, dup_b = Record("1"), Record("2")
+    object.__setattr__(dup_a, "_cache", cache_with_values(name="dup", values={}))
+    object.__setattr__(dup_b, "_cache", cache_with_values(name="dup", values={}))
+    mocker.patch(
+        "fglatch.registry._registry.Table.list_records",
+        return_value=iter([{"1": dup_a, "2": dup_b}]),
+    )
+
+    with pytest.raises(ValueError, match="Duplicate record name: dup"):
+        list_table_records("999")

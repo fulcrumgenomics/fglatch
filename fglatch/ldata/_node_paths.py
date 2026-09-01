@@ -136,7 +136,7 @@ def _collect_file_node_ids(records: Iterable[Record]) -> list[str]:
         if values is None:
             continue
         for value in values.values():
-            for item in value if isinstance(value, (list, tuple)) else (value,):
+            for item in value if isinstance(value, list) else (value,):
                 if isinstance(item, (LatchFile, LatchDir)) and item.remote_path is not None:
                     # Mirror format_path's gate: it round-trips only on a bare latch://<id>.node.
                     match = is_absolute_node_path.match(item.remote_path)
