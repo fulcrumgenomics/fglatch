@@ -164,7 +164,7 @@ _RECORDS_WITH_VALUES_QUERY = gql.gql("""
         }
     }
 """)
-"""Additionally fetch each record's column definitions and values, to prime them without a load."""
+"""Additionally fetch each record's column definitions and values so they can be preloaded."""
 
 
 def _record_with_cache(record_id: str, cache: _Cache) -> Record:
@@ -189,9 +189,9 @@ def _record_with_cache(record_id: str, cache: _Cache) -> Record:
     return record
 
 
-def _primed_record(node: LatchNode) -> Record:
+def _preloaded_record(node: LatchNode) -> Record:
     """
-    Build a `Record` with its name and table id primed from the query response.
+    Build a `Record` with its name and table id preloaded from the query response.
 
     Args:
         node: A catalog sample node carrying the record's id, name, and table (experiment) id.
@@ -204,9 +204,9 @@ def _primed_record(node: LatchNode) -> Record:
     return _record_with_cache(str(node.id), cache)
 
 
-def _records_with_primed_values(nodes: list[LatchNode]) -> dict[RecordName, Record]:
+def _records_with_preloaded_values(nodes: list[LatchNode]) -> dict[RecordName, Record]:
     """
-    Build records with their values primed, collecting any per-record conversion failures.
+    Build records with their values preloaded, collecting any per-record conversion failures.
 
     Args:
         nodes: Catalog sample nodes fetched by the values query (i.e. including column definitions
@@ -214,7 +214,7 @@ def _records_with_primed_values(nodes: list[LatchNode]) -> dict[RecordName, Reco
 
     Returns:
         A mapping from record name to a `Record` whose name, table id, columns, and values are all
-        primed from the query.
+        preloaded from the query.
 
     Raises:
         ValueError: If one or more records' values cannot be converted to their Python types. All
@@ -241,7 +241,7 @@ def _cache_from_catalog_sample(node: LatchNode) -> _Cache:
     """
     Build a fully-populated `_Cache` (name, table id, columns, values) from a catalog sample.
 
-    This mirrors the transform in `latch.registry.record.Record.load()` so a primed record is
+    This mirrors the transform in `latch.registry.record.Record.load()` so a preloaded record is
     indistinguishable from one populated by a network `load()`. The SDK's own `to_python_type` and
     `to_python_literal` are reused, so the value conversion cannot drift from the SDK's.
 
@@ -286,7 +286,7 @@ def _cache_from_catalog_sample(node: LatchNode) -> _Cache:
 
         # NB: this mirrors a quirk in `Record.load()` (record.py:200-204): it sets
         # `InvalidValue("")` for a missing required value and then unconditionally overwrites it
-        # with `None`, so every missing value ends up `None`. We reproduce it exactly so a primed
+        # with `None`, so every missing value ends up `None`. We reproduce it exactly so a preloaded
         # record matches a lazily-loaded one rather than silently diverging.
         if not column.upstream_type["allowEmpty"]:
             values[key] = InvalidValue("")
@@ -322,14 +322,14 @@ def query_latch_records_by_name(
     Fetch a set of Latch Registry records by their names.
 
     Records are fetched across all Registry tables and then filtered to `table_id`. Each returned
-    record has its name and table id primed from the query, so those can be read without an
+    record has its name and table id preloaded from the query, so those can be read without an
     additional per-record network request.
 
     Args:
         record_names: A record name or a list of record names in the Latch Registry.
         table_id: The ID of the table to fetch records from. Only records from this table are
             returned.
-        load_values: If True, fetch each record's column values in the same request and prime them
+        load_values: If True, fetch each record's column values in the same request and preload them
             onto the returned records, so reading values does not trigger a per-record load. If
             False (the default), values are loaded lazily on first access.
 
@@ -381,6 +381,6 @@ def query_latch_records_by_name(
         raise ValueError("Could not find unique records for queried names" + "\n".join(errs))
 
     if load_values:
-        return _records_with_primed_values(nodes)
+        return _records_with_preloaded_values(nodes)
 
-    return {node.name: _primed_record(node) for node in nodes}
+    return {node.name: _preloaded_record(node) for node in nodes}

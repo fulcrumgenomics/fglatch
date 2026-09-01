@@ -86,7 +86,7 @@ def test_query_latch_records_by_name_offline(
     mocker: MockerFixture,
     fake_gql_response: dict[str, Any],
 ) -> None:
-    """It returns real records keyed by name, with name and table id primed from the query."""
+    """It returns real records keyed by name, with name and table id preloaded from the query."""
     mocker.patch("fglatch.registry._registry.execute", return_value=fake_gql_response)
 
     records: dict[RecordName, Record] = query_latch_records_by_name(
@@ -97,7 +97,7 @@ def test_query_latch_records_by_name_offline(
     assert set(records) == {"name_1", "name_2"}
     assert records["name_1"].id == "1"
 
-    # Name and table id are primed from the single query, so no network load is needed to read them.
+    # Name and table id are preloaded from the query, so no network load is needed to read them.
     assert records["name_1"].get_name(load_if_missing=False) == "name_1"
     assert records["name_1"].get_table_id(load_if_missing=False) == "999"
 
@@ -229,11 +229,11 @@ def fake_values_response() -> dict[str, Any]:
     }
 
 
-def test_query_latch_records_by_name_offline_load_values_primes_values(
+def test_query_latch_records_by_name_offline_load_values_preloads_values(
     mocker: MockerFixture,
     fake_values_response: dict[str, Any],
 ) -> None:
-    """With load_values=True, records come back with their values and columns primed offline."""
+    """With load_values=True, records come back with their values and columns preloaded offline."""
     mocker.patch("fglatch.registry._registry.execute", return_value=fake_values_response)
 
     records = query_latch_records_by_name(["name_1", "name_2"], table_id="999", load_values=True)
@@ -243,7 +243,7 @@ def test_query_latch_records_by_name_offline_load_values_primes_values(
     assert records["name_1"].get_columns(load_if_missing=False) is not None
 
 
-def test_query_latch_records_by_name_offline_defaults_to_not_priming_values(
+def test_query_latch_records_by_name_offline_defaults_to_not_preloading_values(
     mocker: MockerFixture,
     fake_gql_response: dict[str, Any],
 ) -> None:
@@ -389,7 +389,7 @@ def full_catalog_sample() -> dict[str, Any]:
     }
 
 
-def test_cache_from_catalog_sample_primes_name_table_and_values(
+def test_cache_from_catalog_sample_preloads_name_table_and_values(
     full_catalog_sample: dict[str, Any],
 ) -> None:
     """It builds a `_Cache` with the sample's name, table id, columns, and converted values."""
@@ -418,8 +418,8 @@ def test_cache_from_catalog_sample_maps_missing_value_to_none(
 
     `Record.load()` writes `InvalidValue("")` for a missing required value and then unconditionally
     overwrites it with `None` (record.py:200-204), so every missing value ends up `None` regardless
-    of whether the column is required. We mirror that quirk so primed records are indistinguishable
-    from lazily-loaded ones.
+    of whether the column is required. We mirror that quirk so preloaded records are
+    indistinguishable from lazily-loaded ones.
     """
     # Add a required (allowEmpty=False) column that has no datum, alongside the optional "baz".
     full_catalog_sample["experiment"]["catalogExperimentColumnDefinitionsByExperimentId"][
@@ -475,8 +475,8 @@ def _values_node_with_timestamps(creation_time: str, event_times: list[str]) -> 
     }
 
 
-def test_cache_from_catalog_sample_primes_timestamps() -> None:
-    """It primes creation_time and last_updated from the latest event, per `Record.load()`."""
+def test_cache_from_catalog_sample_preloads_timestamps() -> None:
+    """It preloads creation_time and last_updated from the latest event, per `Record.load()`."""
     node = LatchNode.model_validate(
         _values_node_with_timestamps("2024-01-01T00:00:00+00:00", ["2024-06-01T12:00:00+00:00"])
     )
