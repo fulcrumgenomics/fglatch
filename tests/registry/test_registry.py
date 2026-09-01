@@ -394,7 +394,7 @@ def test_to_cache_preloads_name_table_and_values(
     """It builds a `_Cache` with the sample's name, table id, columns, and converted values."""
     node = LatchNode.model_validate(full_catalog_sample)
 
-    cache = node.to_cache(load_values=True)
+    cache = node.to_cache()
 
     assert cache.name == "mock_record_1"
     assert cache.table_id == "999"
@@ -430,19 +430,22 @@ def test_to_cache_maps_missing_value_to_none(
     })
     node = LatchNode.model_validate(full_catalog_sample)
 
-    cache = node.to_cache(load_values=True)
+    cache = node.to_cache()
 
     assert cache.values is not None
     assert cache.values["baz"] is None  # optional column, missing datum
     assert cache.values["qux"] is None  # required column, missing datum (InvalidValue overwritten)
 
 
-def test_to_cache_raises_if_values_not_fetched() -> None:
-    """It raises if the node came from the light query and lacks column definitions/data."""
-    node = LatchNode.model_validate({"id": 1, "name": "x", "experiment": {"id": 999}})
+def test_to_cache_raises_on_partial_values_response(
+    full_catalog_sample: dict[str, Any],
+) -> None:
+    """A node with column definitions but no column data (a malformed response) raises."""
+    del full_catalog_sample["catalogSampleColumnDataBySampleId"]
+    node = LatchNode.model_validate(full_catalog_sample)
 
     with pytest.raises(RuntimeError, match="column definitions or data"):
-        node.to_cache(load_values=True)
+        node.to_cache()
 
 
 def test_to_cache_raises_on_datum_without_definition(
@@ -456,7 +459,7 @@ def test_to_cache_raises_on_datum_without_definition(
     node = LatchNode.model_validate(full_catalog_sample)
 
     with pytest.raises(NoSuchColumnError):
-        node.to_cache(load_values=True)
+        node.to_cache()
 
 
 def _values_node_with_timestamps(creation_time: str, event_times: list[str]) -> dict[str, Any]:
@@ -480,7 +483,7 @@ def test_to_cache_preloads_timestamps() -> None:
         _values_node_with_timestamps("2024-01-01T00:00:00+00:00", ["2024-06-01T12:00:00+00:00"])
     )
 
-    cache = node.to_cache(load_values=True)
+    cache = node.to_cache()
 
     assert cache.creation_time == isoparse("2024-01-01T00:00:00+00:00")
     assert cache.last_updated == isoparse("2024-06-01T12:00:00+00:00")
@@ -490,43 +493,41 @@ def test_to_cache_last_updated_falls_back_to_creation_time() -> None:
     """With no events, last_updated falls back to creation_time, matching `Record.load()`."""
     node = LatchNode.model_validate(_values_node_with_timestamps("2024-01-01T00:00:00+00:00", []))
 
-    cache = node.to_cache(load_values=True)
+    cache = node.to_cache()
 
     assert cache.creation_time == isoparse("2024-01-01T00:00:00+00:00")
     assert cache.last_updated == cache.creation_time
 
 
-def test_to_cache_without_load_values_omits_columns_and_values(
-    full_catalog_sample: dict[str, Any],
-) -> None:
-    """With load_values=False, only name and table id are set; columns and values stay unset."""
-    node = LatchNode.model_validate(full_catalog_sample)
+def test_to_cache_light_node_omits_columns_and_values() -> None:
+    """A light node (no column data) yields a cache with name and table id but no values."""
+    node = LatchNode.model_validate({"id": 1, "name": "name_1", "experiment": {"id": 999}})
 
-    cache = node.to_cache(load_values=False)
+    cache = node.to_cache()
 
-    assert cache.name == "mock_record_1"
+    assert cache.name == "name_1"
     assert cache.table_id == "999"
     assert cache.columns is None
     assert cache.values is None
 
 
 def test_to_record_preloads_values(full_catalog_sample: dict[str, Any]) -> None:
-    """to_record(load_values=True) returns a record whose values are readable without a load."""
+    """A values node's record has its columns and values readable without a network load."""
     node = LatchNode.model_validate(full_catalog_sample)
 
-    record = node.to_record(load_values=True)
+    record = node.to_record()
 
     assert record.id == "1"
     assert record.get_name(load_if_missing=False) == "mock_record_1"
     assert record.get_values(load_if_missing=False) == {"foo": "hello", "bar": 42, "baz": None}
 
 
-def test_to_record_without_values_leaves_values_lazy(full_catalog_sample: dict[str, Any]) -> None:
-    """to_record(load_values=False) preloads name and table id but leaves values lazy."""
-    node = LatchNode.model_validate(full_catalog_sample)
+def test_to_record_light_node_leaves_values_lazy() -> None:
+    """A light node's record preloads name and table id but leaves values lazy."""
+    node = LatchNode.model_validate({"id": 1, "name": "name_1", "experiment": {"id": 999}})
 
-    record = node.to_record(load_values=False)
+    record = node.to_record()
 
-    assert record.get_name(load_if_missing=False) == "mock_record_1"
+    assert record.get_name(load_if_missing=False) == "name_1"
     assert record.get_table_id(load_if_missing=False) == "999"
     assert record.get_values(load_if_missing=False) is None

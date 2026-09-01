@@ -87,26 +87,25 @@ class LatchNode(_FrozenModel):
     creation_time: str | None = Field(default=None, alias="creationTime")
     events: CatalogEvents | None = Field(default=None, alias="catalogEventsBySampleId")
 
-    def to_cache(self, *, load_values: bool) -> _Cache:
+    def to_cache(self) -> _Cache:
         """
-        Build this record's `_Cache` from the query response.
+        Build this record's `_Cache` from whatever the node contains.
 
         Mirrors the transform in `latch.registry.record.Record.load()` so a preloaded record is
         indistinguishable from one populated by a network `load()`; the SDK's own `to_python_type`
         and `to_python_literal` are reused, so value conversion cannot drift from the SDK's.
 
-        Args:
-            load_values: If True, also build the record's columns and converted values from the
-                node's column definitions and data. If False, only the name and table id are
-                populated and values remain to be lazily loaded.
+        If the node includes column data (i.e. it was fetched by the values query), its columns and
+        converted values are built too; otherwise only the name, table id, and timestamps are set
+        and values remain to be lazily loaded.
 
         Returns:
-            A `_Cache` with the record's name, table id, and timestamps (and, when `load_values`,
-            its columns and converted values).
+            A `_Cache` with the record's name, table id, and timestamps, plus its columns and
+            converted values when the node carries them.
 
         Raises:
-            RuntimeError: If `load_values` is True but the node lacks column definitions or data
-                (i.e. it was not fetched by the values query).
+            RuntimeError: If the node has column definitions or data but not both (a malformed
+                values response).
             NoSuchColumnError: If a column datum references a column that has no definition.
             RegistryTransformerException: If a value cannot be converted to its Python type.
         """
@@ -117,7 +116,7 @@ class LatchNode(_FrozenModel):
 
         columns: dict[str, Column] | None = None
         values: dict[str, RecordValue] | None = None
-        if load_values:
+        if self.column_data is not None or self.experiment.column_definitions is not None:
             columns, values = self._columns_and_values()
 
         return _Cache(
@@ -129,16 +128,14 @@ class LatchNode(_FrozenModel):
             values=values,
         )
 
-    def to_record(self, *, load_values: bool) -> Record:
+    def to_record(self) -> Record:
         """
         Build a `Record` with this node's data preloaded onto its cache.
 
-        Args:
-            load_values: If True, also preload the record's columns and values (see `to_cache`).
-
         Returns:
             A `Record` whose cache is preloaded, so the corresponding getters do not trigger a
-            network load.
+            network load. Columns and values are preloaded when the node carries them (see
+            `to_cache`).
         """
         record = Record(str(self.id))
 
@@ -146,7 +143,7 @@ class LatchNode(_FrozenModel):
         # constructor nor `dataclasses.replace()` can inject a populated cache. `object.__setattr__`
         # is the sanctioned way to write a field on a frozen dataclass — it is exactly the mechanism
         # a frozen dataclass's own `__post_init__` uses.
-        object.__setattr__(record, "_cache", self.to_cache(load_values=load_values))
+        object.__setattr__(record, "_cache", self.to_cache())
 
         return record
 
@@ -339,7 +336,7 @@ def query_latch_records_by_name(
     value_errs: list[str] = []
     for node in nodes:
         try:
-            records[node.name] = node.to_record(load_values=load_values)
+            records[node.name] = node.to_record()
         except (RegistryTransformerException, NoSuchColumnError) as error:
             value_errs.append(f"{node.name} (id={node.id}): {error}")
 
