@@ -275,15 +275,15 @@ def _preload_linked_record_names(records: Mapping[RecordName, Record]) -> None:
     """
     Preload the names of records linked from `records`' values, in a single query.
 
-    A link-column value is a `Record` with only its id populated, so reading its name would trigger
-    a per-record `Record.load()`. This resolves all linked records at once (by id) and primes each
-    one's cache, so a later `get_name()` is a cache hit.
+    A link-column value is a `Record` with only its id populated. This resolves all linked records
+    at once and preloads each one's name.
 
     Args:
         records: The records whose values may contain linked records.
     """
     linked: dict[str, Record] = {}
     for record in records.values():
+        # load_if_missing=False respects the user's choice of `load_values`.
         values = record.get_values(load_if_missing=False)
         if values is None:
             continue
