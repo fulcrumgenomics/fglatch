@@ -413,15 +413,24 @@ def list_table_records(
         A mapping from record name to a fully-primed `Record`.
 
     Raises:
-        ValueError: If two records in the table share a name.
+        ValidationError: If a linked-record-names GQL response cannot be validated.
+        ValueError: If two or more records in the table share a name.
+        RuntimeError: If a file/dir node-path query fails while priming paths.
     """
     records: dict[RecordName, Record] = {}
+    name_counts: Counter[RecordName] = Counter()
     for page in Table(id=table_id).list_records(page_size=page_size):
         for record in page.values():
             name = record.get_name()
-            if name in records:
-                raise ValueError(f"Duplicate record name: {name} in table {table_id}")
-            records[name] = record
+            name_counts[name] += 1
+            records.setdefault(name, record)
+
+    duplicates = [name for name, count in name_counts.items() if count > 1]
+    if duplicates:
+        detail = "\n".join(
+            f"Duplicate record name: {name} (n={name_counts[name]})" for name in duplicates
+        )
+        raise ValueError(f"Could not list records in table {table_id}:\n{detail}")
 
     _preload_linked_record_names(records)
     _prime_file_paths(records.values(), chunk_size=chunk_size)

@@ -703,15 +703,18 @@ def test_list_table_records_empty_table_returns_empty(mocker: MockerFixture) -> 
     assert list_table_records("999") == {}
 
 
-def test_list_table_records_raises_on_duplicate_name(mocker: MockerFixture) -> None:
-    """Two records sharing a name raise rather than silently dropping one."""
-    dup_a, dup_b = Record("1"), Record("2")
-    object.__setattr__(dup_a, "_cache", cache_with_values(name="dup", values={}))
-    object.__setattr__(dup_b, "_cache", cache_with_values(name="dup", values={}))
-    mocker.patch(
-        "fglatch.registry._registry.Table.list_records",
-        return_value=iter([{"1": dup_a, "2": dup_b}]),
-    )
+def test_list_table_records_aggregates_all_duplicate_names(mocker: MockerFixture) -> None:
+    """All duplicated names are collected into one raised error, not just the first."""
+    page = {}
+    for record_id, name in (("1", "dup1"), ("2", "dup1"), ("3", "dup2"), ("4", "dup2")):
+        record = Record(record_id)
+        object.__setattr__(record, "_cache", cache_with_values(name=name, values={}))
+        page[record_id] = record
+    mocker.patch("fglatch.registry._registry.Table.list_records", return_value=iter([page]))
 
-    with pytest.raises(ValueError, match="Duplicate record name: dup"):
+    with pytest.raises(ValueError) as excinfo:
         list_table_records("999")
+
+    message = str(excinfo.value)
+    assert "Duplicate record name: dup1 (n=2)" in message
+    assert "Duplicate record name: dup2 (n=2)" in message

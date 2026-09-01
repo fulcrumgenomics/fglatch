@@ -130,7 +130,7 @@ def _rewrite_node_path(value: Any, node_paths: Mapping[str, str]) -> Any:
 
 def _collect_file_node_ids(records: Iterable[Record]) -> list[str]:
     """The distinct file/dir node ids referenced by `records`' file cells, in first-seen order."""
-    node_ids: dict[str, None] = {}  # ordered set: dedupe while preserving first-seen order
+    node_ids: dict[str, None] = {}  # dict as an ordered set
     for record in records:
         values = record.get_values(load_if_missing=False)
         if values is None:
