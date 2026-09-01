@@ -3,30 +3,87 @@ from typing import cast
 
 import gql
 from latch.registry.record import Record
+from latch.registry.record import _Cache
 from latch_sdk_gql import JsonArray
 from latch_sdk_gql.execute import execute
 from pydantic import BaseModel
+from pydantic import ConfigDict
 from pydantic import Field
 
 from fglatch.type_aliases import RecordName
 
 
-class LatchNode(BaseModel):
-    """The gql query below returns {'catalogSamples': {'nodes': [{'id': int}]}}."""
+class Experiment(BaseModel):
+    """The experiment (i.e. Registry table) that a catalog sample belongs to."""
+
+    model_config = ConfigDict(frozen=True)
 
     id: int
 
 
+class LatchNode(BaseModel):
+    """A single `catalogSample` node: a record's id, name, and owning table id."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: int
+    name: str
+    experiment: Experiment
+
+
 class CatalogSamples(BaseModel):
-    """The gql query below returns {'catalogSamples': {'nodes': [{'id': int}]}}."""
+    """The `nodes` list returned under `catalogSamples`."""
+
+    model_config = ConfigDict(frozen=True)
 
     nodes: list[LatchNode]
 
 
 class CatalogSamplesQueryResponse(BaseModel):
-    """The gql query below returns {'catalogSamples': {'nodes': [{'id': int}]}}."""
+    """The top-level response returned by the records query."""
+
+    model_config = ConfigDict(frozen=True)
 
     catalog_samples: CatalogSamples = Field(alias="catalogSamples")
+
+
+_RECORDS_QUERY = gql.gql("""
+    query Query($sampleNames: [String!]) {
+        catalogSamples(filter: {name: {in: $sampleNames}}) {
+            nodes {
+                id
+                name
+                experiment {
+                    id
+                }
+            }
+        }
+    }
+""")
+"""Fetch matching records' id, name, and owning table id in a single request."""
+
+
+def _primed_record(node: LatchNode) -> Record:
+    """
+    Build a `Record` with its name and table id primed from the query response.
+
+    Args:
+        node: A catalog sample node carrying the record's id, name, and table (experiment) id.
+
+    Returns:
+        A `Record` whose cache holds the name and table id, so reading either does not trigger a
+        network load.
+    """
+    record = Record(str(node.id))
+    cache = _Cache(table_id=str(node.experiment.id), name=node.name)
+
+    # `Record` is a frozen dataclass whose `_cache` field is `init=False`, so neither the
+    # constructor nor `dataclasses.replace()` can inject a populated cache. `object.__setattr__` is
+    # the sanctioned way to write a field on a frozen dataclass — it is exactly the mechanism a
+    # frozen dataclass's own `__post_init__` uses.
+    object.__setattr__(record, "_cache", cache)
+
+    return record
 
 
 def query_latch_records_by_name(
@@ -38,13 +95,14 @@ def query_latch_records_by_name(
     """
     Fetch a set of Latch Registry records by their names.
 
-    By default, the query is performed across *all* tables in the Registry. If a table ID is
-    provided, only records from the specified table will be included in the response.
+    Records are fetched across all Registry tables and then filtered to `table_id`. Each returned
+    record has its name and table id primed from the query, so those can be read without an
+    additional per-record network request.
 
     Args:
         record_names: A record name or a list of record names in the Latch Registry.
-        table_id: An optional table ID. If provided, only records from this table will be included
-            in the returned dictionary.
+        table_id: The ID of the table to fetch records from. Only records from this table are
+            returned.
 
     Raises:
         ValidationError: If the GQL response can't be validated.
@@ -65,26 +123,19 @@ def query_latch_records_by_name(
     sample_names: JsonArray = cast(JsonArray, record_names)
 
     data = execute(
-        document=gql.gql("""
-            query Query($sampleNames:[String!]) {
-                catalogSamples(filter: {name: {in: $sampleNames}}) {
-                    nodes {
-                    id
-                    name
-                    }
-                }
-            }
-            """),
+        document=_RECORDS_QUERY,
         variables={"sampleNames": sample_names},
     )
 
     response = CatalogSamplesQueryResponse.model_validate(data)
-    records: list[Record] = [Record(str(k.id)) for k in response.catalog_samples.nodes]
 
-    # Filter to records from the specified table.
-    records = [r for r in records if r.get_table_id() == table_id]
+    # Keep only the records in the requested table. Filtering on the table id returned by the query
+    # avoids a per-record network load to resolve each record's table.
+    nodes: list[LatchNode] = [
+        node for node in response.catalog_samples.nodes if str(node.experiment.id) == table_id
+    ]
 
-    name_counts: Counter[RecordName] = Counter(record.get_name() for record in records)
+    name_counts: Counter[RecordName] = Counter(node.name for node in nodes)
 
     errs: list[str] = []
     for record_name in record_names:
@@ -97,6 +148,4 @@ def query_latch_records_by_name(
     if errs:
         raise ValueError("Could not find unique records for queried names" + "\n".join(errs))
 
-    record_map: dict[RecordName, Record] = {record.get_name(): record for record in records}
-
-    return record_map
+    return {node.name: _primed_record(node) for node in nodes}
