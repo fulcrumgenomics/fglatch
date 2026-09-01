@@ -22,6 +22,7 @@ from pydantic import Field
 
 from fglatch.type_aliases import RecordName
 
+
 class _FrozenModel(BaseModel):
     """A frozen Pydantic model that can be used as a base class for other models."""
 
@@ -30,38 +31,45 @@ class _FrozenModel(BaseModel):
 
 class ColumnDefinition(_FrozenModel):
     """A single column definition: its key and its raw Registry type."""
+
     key: str
     type: Any  # Opaque `DBType`, passed to the SDK's `to_python_type` / `to_python_literal`.
 
 
 class ColumnDefinitions(_FrozenModel):
     """The column definitions returned for an experiment (table)."""
+
     nodes: list[ColumnDefinition]
 
 
 class ColumnDatum(_FrozenModel):
     """A single column value for a record: its key and its raw Registry value."""
+
     key: str
-    data: Any  # Opaque `DBType`, passed to the SDK's `to_python_type` / `to_python_literal`.
+    data: Any  # Opaque `DBValue`, passed to the SDK's `to_python_literal`.
 
 
 class ColumnData(_FrozenModel):
     """The column values returned for a record."""
+
     nodes: list[ColumnDatum]
 
 
 class CatalogEvent(_FrozenModel):
     """A single catalog event for a record (e.g. an update), carrying its timestamp."""
+
     time: str
 
 
 class CatalogEvents(_FrozenModel):
     """The most recent catalog events for a record."""
+
     nodes: list[CatalogEvent]
 
 
 class Experiment(_FrozenModel):
     """The experiment (i.e. Registry table) that a catalog sample belongs to."""
+
     id: int
     column_definitions: ColumnDefinitions | None = Field(
         default=None,
@@ -78,6 +86,119 @@ class LatchNode(_FrozenModel):
     column_data: ColumnData | None = Field(default=None, alias="catalogSampleColumnDataBySampleId")
     creation_time: str | None = Field(default=None, alias="creationTime")
     events: CatalogEvents | None = Field(default=None, alias="catalogEventsBySampleId")
+
+    def to_cache(self, *, load_values: bool) -> _Cache:
+        """
+        Build this record's `_Cache` from the query response.
+
+        Mirrors the transform in `latch.registry.record.Record.load()` so a preloaded record is
+        indistinguishable from one populated by a network `load()`; the SDK's own `to_python_type`
+        and `to_python_literal` are reused, so value conversion cannot drift from the SDK's.
+
+        Args:
+            load_values: If True, also build the record's columns and converted values from the
+                node's column definitions and data. If False, only the name and table id are
+                populated and values remain to be lazily loaded.
+
+        Returns:
+            A `_Cache` with the record's name, table id, and timestamps (and, when `load_values`,
+            its columns and converted values).
+
+        Raises:
+            RuntimeError: If `load_values` is True but the node lacks column definitions or data
+                (i.e. it was not fetched by the values query).
+            NoSuchColumnError: If a column datum references a column that has no definition.
+            RegistryTransformerException: If a value cannot be converted to its Python type.
+        """
+        creation_time = isoparse(self.creation_time) if self.creation_time is not None else None
+        last_updated = creation_time
+        if self.events is not None and len(self.events.nodes) > 0:
+            last_updated = isoparse(self.events.nodes[0].time)
+
+        columns: dict[str, Column] | None = None
+        values: dict[str, RecordValue] | None = None
+        if load_values:
+            columns, values = self._columns_and_values()
+
+        return _Cache(
+            table_id=str(self.experiment.id),
+            name=self.name,
+            creation_time=creation_time,
+            last_updated=last_updated,
+            columns=columns,
+            values=values,
+        )
+
+    def to_record(self, *, load_values: bool) -> Record:
+        """
+        Build a `Record` with this node's data preloaded onto its cache.
+
+        Args:
+            load_values: If True, also preload the record's columns and values (see `to_cache`).
+
+        Returns:
+            A `Record` whose cache is preloaded, so the corresponding getters do not trigger a
+            network load.
+        """
+        record = Record(str(self.id))
+
+        # `Record` is a frozen dataclass whose `_cache` field is `init=False`, so neither the
+        # constructor nor `dataclasses.replace()` can inject a populated cache. `object.__setattr__`
+        # is the sanctioned way to write a field on a frozen dataclass — it is exactly the mechanism
+        # a frozen dataclass's own `__post_init__` uses.
+        object.__setattr__(record, "_cache", self.to_cache(load_values=load_values))
+
+        return record
+
+    def _columns_and_values(self) -> tuple[dict[str, Column], dict[str, RecordValue]]:
+        """
+        Build the record's columns and converted values, mirroring `Record.load()`.
+
+        Returns:
+            A `(columns, values)` pair keyed by column key.
+
+        Raises:
+            RuntimeError: If the node lacks column definitions or data.
+            NoSuchColumnError: If a column datum references a column that has no definition.
+            RegistryTransformerException: If a value cannot be converted to its Python type.
+        """
+        if self.experiment.column_definitions is None or self.column_data is None:
+            raise RuntimeError(
+                "catalog sample is missing column definitions or data; "
+                "it must be fetched with the values query"
+            )
+
+        columns: dict[str, Column] = {
+            defn.key: Column(defn.key, to_python_type(defn.type["type"]), defn.type)
+            for defn in self.experiment.column_definitions.nodes
+        }
+
+        column_values: dict[str, DBValue] = {
+            datum.key: datum.data for datum in self.column_data.nodes
+        }
+
+        values: dict[str, RecordValue] = {}
+        for key, db_value in column_values.items():
+            column = columns.get(key)
+            if column is None:
+                raise NoSuchColumnError(key)
+
+            values[key] = to_python_literal(db_value, column.upstream_type["type"])
+
+        for key, column in columns.items():
+            if key in values:
+                continue
+
+            # NB: this mirrors a quirk in `Record.load()` (record.py:200-204): it sets
+            # `InvalidValue("")` for a missing required value and then unconditionally overwrites it
+            # with `None`, so every missing value ends up `None`. We reproduce it exactly so a
+            # preloaded record matches a lazily-loaded one rather than silently diverging.
+            if not column.upstream_type["allowEmpty"]:
+                values[key] = InvalidValue("")
+
+            values[key] = None
+
+        return columns, values
 
 
 class CatalogSamples(_FrozenModel):
@@ -141,134 +262,6 @@ _RECORDS_WITH_VALUES_QUERY = gql.gql("""
     }
 """)
 """Additionally fetch each record's column definitions and values so they can be preloaded."""
-
-
-def _preloaded_record(node: LatchNode) -> Record:
-    """
-    Build a `Record` with its name and table id preloaded from the query response.
-
-    Args:
-        node: A catalog sample node carrying the record's id, name, and table (experiment) id.
-
-    Returns:
-        A `Record` whose cache holds the name and table id, so reading either does not trigger a
-        network load.
-    """
-    cache = _Cache(table_id=str(node.experiment.id), name=node.name)
-    record = Record(str(node.id))
-    object.__setattr__(record, "_cache", cache)
-
-    return record
-
-
-def _records_with_preloaded_values(nodes: list[LatchNode]) -> dict[RecordName, Record]:
-    """
-    Build records with their values preloaded, collecting any per-record conversion failures.
-
-    Args:
-        nodes: Catalog sample nodes fetched by the values query (i.e. including column definitions
-            and data).
-
-    Returns:
-        A mapping from record name to a `Record` whose name, table id, columns, and values are all
-        preloaded from the query.
-
-    Raises:
-        ValueError: If one or more records' values cannot be converted to their Python types. All
-            failures are collected and reported together.
-    """
-    records: dict[RecordName, Record] = {}
-    errs: list[str] = []
-    for node in nodes:
-        try:
-            cache = _cache_from_catalog_sample(node)
-        except (RegistryTransformerException, NoSuchColumnError) as error:
-            errs.append(f"{node.name} (id={node.id}): {error}")
-            continue
-
-        record = Record(str(node.id))
-        object.__setattr__(record, "_cache", cache)
-
-        records[node.name] = record
-
-    if errs:
-        raise ValueError("Failed to load values for records:\n" + "\n".join(errs))
-
-    return records
-
-
-def _cache_from_catalog_sample(node: LatchNode) -> _Cache:
-    """
-    Build a fully-populated `_Cache` (name, table id, columns, values) from a catalog sample.
-
-    This mirrors the transform in `latch.registry.record.Record.load()` so a preloaded record is
-    indistinguishable from one populated by a network `load()`. The SDK's own `to_python_type` and
-    `to_python_literal` are reused, so the value conversion cannot drift from the SDK's.
-
-    Args:
-        node: A catalog sample node that includes column definitions and column data (i.e. one
-            fetched by the values query).
-
-    Returns:
-        A `_Cache` populated with the record's name, table id, timestamps, columns, and converted
-        values.
-
-    Raises:
-        RuntimeError: If the node lacks column definitions or column data (i.e. it came from the
-            light query rather than the values query).
-        NoSuchColumnError: If a column datum references a column that has no definition.
-        RegistryTransformerException: If a value cannot be converted to its Python type.
-    """
-    if node.experiment.column_definitions is None or node.column_data is None:
-        raise RuntimeError(
-            "catalog sample is missing column definitions or data; "
-            "it must be fetched with the values query"
-        )
-
-    columns: dict[str, Column] = {
-        defn.key: Column(defn.key, to_python_type(defn.type["type"]), defn.type)
-        for defn in node.experiment.column_definitions.nodes
-    }
-
-    column_values: dict[str, DBValue] = {datum.key: datum.data for datum in node.column_data.nodes}
-
-    values: dict[str, RecordValue] = {}
-    for key, db_value in column_values.items():
-        column = columns.get(key)
-        if column is None:
-            raise NoSuchColumnError(key)
-
-        values[key] = to_python_literal(db_value, column.upstream_type["type"])
-
-    for key, column in columns.items():
-        if key in values:
-            continue
-
-        # NB: this mirrors a quirk in `Record.load()` (record.py:200-204): it sets
-        # `InvalidValue("")` for a missing required value and then unconditionally overwrites it
-        # with `None`, so every missing value ends up `None`. We reproduce it exactly so a preloaded
-        # record matches a lazily-loaded one rather than silently diverging.
-        if not column.upstream_type["allowEmpty"]:
-            values[key] = InvalidValue("")
-
-        values[key] = None
-
-    # Timestamps mirror `Record.load()`: last_updated defaults to the creation time and is replaced
-    # by the most recent event's time when one exists. (The values query always returns these, but
-    # guard against their absence so the transform is robust to a lighter response.)
-    creation_time = isoparse(node.creation_time) if node.creation_time is not None else None
-    last_updated = creation_time
-    if node.events is not None and len(node.events.nodes) > 0:
-        last_updated = isoparse(node.events.nodes[0].time)
-
-    return _Cache(
-        table_id=str(node.experiment.id),
-        name=node.name,
-        creation_time=creation_time,
-        last_updated=last_updated,
-        columns=columns,
-        values=values,
-    )
 
 
 def query_latch_records_by_name(
@@ -340,7 +333,17 @@ def query_latch_records_by_name(
     if errs:
         raise ValueError("Could not find unique records for queried names" + "\n".join(errs))
 
-    if load_values:
-        return _records_with_preloaded_values(nodes)
+    # Build each record, preloading its cache from the node. Value conversion can fail per record;
+    # collect those failures and report them together rather than aborting on the first.
+    records: dict[RecordName, Record] = {}
+    value_errs: list[str] = []
+    for node in nodes:
+        try:
+            records[node.name] = node.to_record(load_values=load_values)
+        except (RegistryTransformerException, NoSuchColumnError) as error:
+            value_errs.append(f"{node.name} (id={node.id}): {error}")
 
-    return {node.name: _preloaded_record(node) for node in nodes}
+    if value_errs:
+        raise ValueError("Failed to load values for records:\n" + "\n".join(value_errs))
+
+    return records
