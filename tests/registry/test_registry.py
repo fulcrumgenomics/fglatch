@@ -179,6 +179,137 @@ def test_query_latch_records_by_name_raises_if_response_cannot_be_validated(
         query_latch_records_by_name(["name_1", "name_2"], table_id="999")
 
 
+@pytest.fixture
+def fake_values_response() -> dict[str, Any]:
+    """A fake values-query response: id, name, table id, column definitions, and data per node."""
+    return {
+        "catalogSamples": {
+            "nodes": [
+                {
+                    "id": 1,
+                    "name": "name_1",
+                    "experiment": {
+                        "id": 999,
+                        "catalogExperimentColumnDefinitionsByExperimentId": {
+                            "nodes": [
+                                {
+                                    "key": "foo",
+                                    "type": {"type": {"primitive": "string"}, "allowEmpty": False},
+                                    "def": None,
+                                }
+                            ]
+                        },
+                    },
+                    "catalogSampleColumnDataBySampleId": {
+                        "nodes": [{"key": "foo", "data": {"value": "hello", "valid": True}}]
+                    },
+                },
+                {
+                    "id": 2,
+                    "name": "name_2",
+                    "experiment": {
+                        "id": 999,
+                        "catalogExperimentColumnDefinitionsByExperimentId": {
+                            "nodes": [
+                                {
+                                    "key": "foo",
+                                    "type": {"type": {"primitive": "string"}, "allowEmpty": False},
+                                    "def": None,
+                                }
+                            ]
+                        },
+                    },
+                    "catalogSampleColumnDataBySampleId": {
+                        "nodes": [{"key": "foo", "data": {"value": "world", "valid": True}}]
+                    },
+                },
+            ]
+        }
+    }
+
+
+def test_query_latch_records_by_name_offline_load_values_primes_values(
+    mocker: MockerFixture,
+    fake_values_response: dict[str, Any],
+) -> None:
+    """With load_values=True, records come back with their values and columns primed offline."""
+    mocker.patch("fglatch.registry._registry.execute", return_value=fake_values_response)
+
+    records = query_latch_records_by_name(["name_1", "name_2"], table_id="999", load_values=True)
+
+    assert records["name_1"].get_values(load_if_missing=False) == {"foo": "hello"}
+    assert records["name_2"].get_values(load_if_missing=False) == {"foo": "world"}
+    assert records["name_1"].get_columns(load_if_missing=False) is not None
+
+
+def test_query_latch_records_by_name_offline_defaults_to_not_priming_values(
+    mocker: MockerFixture,
+    fake_gql_response: dict[str, Any],
+) -> None:
+    """By default values are not fetched, so they remain lazily loaded on first access."""
+    mocker.patch("fglatch.registry._registry.execute", return_value=fake_gql_response)
+
+    records = query_latch_records_by_name(["name_1", "name_2"], table_id="999")
+
+    assert records["name_1"].get_values(load_if_missing=False) is None
+
+
+def test_query_latch_records_by_name_load_values_collects_conversion_errors(
+    mocker: MockerFixture,
+) -> None:
+    """A per-record value conversion failure is collected and raised once, naming the record."""
+    response = {
+        "catalogSamples": {
+            "nodes": [
+                {
+                    "id": 1,
+                    "name": "name_1",
+                    "experiment": {
+                        "id": 999,
+                        "catalogExperimentColumnDefinitionsByExperimentId": {
+                            "nodes": [
+                                {
+                                    "key": "n",
+                                    "type": {"type": {"primitive": "integer"}, "allowEmpty": False},
+                                    "def": None,
+                                }
+                            ]
+                        },
+                    },
+                    "catalogSampleColumnDataBySampleId": {
+                        "nodes": [{"key": "n", "data": {"value": "not-an-int", "valid": True}}]
+                    },
+                },
+                {
+                    "id": 2,
+                    "name": "name_2",
+                    "experiment": {
+                        "id": 999,
+                        "catalogExperimentColumnDefinitionsByExperimentId": {
+                            "nodes": [
+                                {
+                                    "key": "n",
+                                    "type": {"type": {"primitive": "integer"}, "allowEmpty": False},
+                                    "def": None,
+                                }
+                            ]
+                        },
+                    },
+                    "catalogSampleColumnDataBySampleId": {
+                        "nodes": [{"key": "n", "data": {"value": 5, "valid": True}}]
+                    },
+                },
+            ]
+        }
+    }
+    mocker.patch("fglatch.registry._registry.execute", return_value=response)
+
+    with pytest.raises(ValueError, match="Failed to load values") as excinfo:
+        query_latch_records_by_name(["name_1", "name_2"], table_id="999", load_values=True)
+
+    assert "name_1" in str(excinfo.value)
+
+
 class MockRecord(LatchRecordModel):
     """
     A fake record for testing.

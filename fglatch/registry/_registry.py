@@ -10,6 +10,7 @@ from latch.registry.types import Column
 from latch.registry.types import InvalidValue
 from latch.registry.types import RecordValue
 from latch.registry.upstream_types.values import DBValue
+from latch.registry.utils import RegistryTransformerException
 from latch.registry.utils import to_python_literal
 from latch.registry.utils import to_python_type
 from latch_sdk_gql import JsonArray
@@ -112,6 +113,57 @@ _RECORDS_QUERY = gql.gql("""
 """Fetch matching records' id, name, and owning table id in a single request."""
 
 
+_RECORDS_WITH_VALUES_QUERY = gql.gql("""
+    query Query($sampleNames: [String!]) {
+        catalogSamples(filter: {name: {in: $sampleNames}}) {
+            nodes {
+                id
+                name
+                experiment {
+                    id
+                    catalogExperimentColumnDefinitionsByExperimentId {
+                        nodes {
+                            type
+                            key
+                            def
+                        }
+                    }
+                }
+                catalogSampleColumnDataBySampleId {
+                    nodes {
+                        key
+                        data
+                    }
+                }
+            }
+        }
+    }
+""")
+"""Additionally fetch each record's column definitions and values, to prime them without a load."""
+
+
+def _record_with_cache(record_id: str, cache: _Cache) -> Record:
+    """
+    Create a `Record` and attach a pre-populated cache to it.
+
+    Args:
+        record_id: The record's unique id.
+        cache: The cache to attach to the record.
+
+    Returns:
+        A `Record` whose `_cache` is the given cache.
+    """
+    record = Record(record_id)
+
+    # `Record` is a frozen dataclass whose `_cache` field is `init=False`, so neither the
+    # constructor nor `dataclasses.replace()` can inject a populated cache. `object.__setattr__` is
+    # the sanctioned way to write a field on a frozen dataclass — it is exactly the mechanism a
+    # frozen dataclass's own `__post_init__` uses.
+    object.__setattr__(record, "_cache", cache)
+
+    return record
+
+
 def _primed_record(node: LatchNode) -> Record:
     """
     Build a `Record` with its name and table id primed from the query response.
@@ -123,16 +175,41 @@ def _primed_record(node: LatchNode) -> Record:
         A `Record` whose cache holds the name and table id, so reading either does not trigger a
         network load.
     """
-    record = Record(str(node.id))
     cache = _Cache(table_id=str(node.experiment.id), name=node.name)
+    return _record_with_cache(str(node.id), cache)
 
-    # `Record` is a frozen dataclass whose `_cache` field is `init=False`, so neither the
-    # constructor nor `dataclasses.replace()` can inject a populated cache. `object.__setattr__` is
-    # the sanctioned way to write a field on a frozen dataclass — it is exactly the mechanism a
-    # frozen dataclass's own `__post_init__` uses.
-    object.__setattr__(record, "_cache", cache)
 
-    return record
+def _records_with_primed_values(nodes: list[LatchNode]) -> dict[RecordName, Record]:
+    """
+    Build records with their values primed, collecting any per-record conversion failures.
+
+    Args:
+        nodes: Catalog sample nodes fetched by the values query (i.e. including column definitions
+            and data).
+
+    Returns:
+        A mapping from record name to a `Record` whose name, table id, columns, and values are all
+        primed from the query.
+
+    Raises:
+        ValueError: If one or more records' values cannot be converted to their Python types. All
+            failures are collected and reported together.
+    """
+    records: dict[RecordName, Record] = {}
+    errs: list[str] = []
+    for node in nodes:
+        try:
+            cache = _cache_from_catalog_sample(node)
+        except (RegistryTransformerException, NoSuchColumnError) as error:
+            errs.append(f"{node.name} (id={node.id}): {error}")
+            continue
+
+        records[node.name] = _record_with_cache(str(node.id), cache)
+
+    if errs:
+        raise ValueError("Failed to load values for records:\n" + "\n".join(errs))
+
+    return records
 
 
 def _cache_from_catalog_sample(node: LatchNode) -> _Cache:
@@ -203,6 +280,7 @@ def query_latch_records_by_name(
     /,
     *,
     table_id: str,
+    load_values: bool = False,
 ) -> dict[RecordName, Record]:
     """
     Fetch a set of Latch Registry records by their names.
@@ -215,6 +293,9 @@ def query_latch_records_by_name(
         record_names: A record name or a list of record names in the Latch Registry.
         table_id: The ID of the table to fetch records from. Only records from this table are
             returned.
+        load_values: If True, fetch each record's column values in the same request and prime them
+            onto the returned records, so reading values does not trigger a per-record load. If
+            False (the default), values are loaded lazily on first access.
 
     Raises:
         ValidationError: If the GQL response can't be validated.
@@ -223,6 +304,8 @@ def query_latch_records_by_name(
             a table, so this should only happen if there are name collisions _across_ Registry
             tables. Requiring a `table_id` is intended to avoid this, and this error is not
             expected to be raised in practice.)
+        ValueError: If `load_values` is True and one or more records' values cannot be converted to
+            their Python types.
     """
     if isinstance(record_names, str):
         record_names = [record_names]
@@ -234,8 +317,9 @@ def query_latch_records_by_name(
     # `JsonArray` circularly reference each other. The cast works around this limitation.
     sample_names: JsonArray = cast(JsonArray, record_names)
 
+    query = _RECORDS_WITH_VALUES_QUERY if load_values else _RECORDS_QUERY
     data = execute(
-        document=_RECORDS_QUERY,
+        document=query,
         variables={"sampleNames": sample_names},
     )
 
@@ -259,5 +343,8 @@ def query_latch_records_by_name(
 
     if errs:
         raise ValueError("Could not find unique records for queried names" + "\n".join(errs))
+
+    if load_values:
+        return _records_with_primed_values(nodes)
 
     return {node.name: _primed_record(node) for node in nodes}
