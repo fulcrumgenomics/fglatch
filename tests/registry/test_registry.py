@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -679,16 +680,18 @@ def test_list_table_records_preloads_links_and_files(mocker: MockerFixture) -> N
     assert file_cell.remote_path == "latch://b.mount/a.txt"
 
 
+def _named_record(record_id: str, name: str) -> Record:
+    """A `Record` with `name` primed and empty values (no priming network on preload)."""
+    record = Record(record_id)
+    object.__setattr__(record, "_cache", cache_with_values(name=name, values={}))
+    return record
+
+
 def test_list_table_records_consumes_all_pages(mocker: MockerFixture) -> None:
     """Records from every page are returned, name-keyed."""
-    page_1 = {"1": Record("1")}
-    page_2 = {"2": Record("2")}
-    for record_id, page in (("1", page_1), ("2", page_2)):
-        object.__setattr__(
-            page[record_id], "_cache", cache_with_values(name=f"r{record_id}", values={})
-        )
     mocker.patch(
-        "fglatch.registry._registry.Table.list_records", return_value=iter([page_1, page_2])
+        "fglatch.registry._registry.Table.list_records",
+        return_value=iter([{"1": _named_record("1", "r1")}, {"2": _named_record("2", "r2")}]),
     )
 
     records = list_table_records("999")
@@ -705,11 +708,10 @@ def test_list_table_records_empty_table_returns_empty(mocker: MockerFixture) -> 
 
 def test_list_table_records_aggregates_all_duplicate_names(mocker: MockerFixture) -> None:
     """All duplicated names are collected into one raised error, not just the first."""
-    page = {}
-    for record_id, name in (("1", "dup1"), ("2", "dup1"), ("3", "dup2"), ("4", "dup2")):
-        record = Record(record_id)
-        object.__setattr__(record, "_cache", cache_with_values(name=name, values={}))
-        page[record_id] = record
+    page = {
+        rid: _named_record(rid, name)
+        for rid, name in (("1", "dup1"), ("2", "dup1"), ("3", "dup2"), ("4", "dup2"))
+    }
     mocker.patch("fglatch.registry._registry.Table.list_records", return_value=iter([page]))
 
     with pytest.raises(ValueError) as excinfo:
@@ -718,3 +720,54 @@ def test_list_table_records_aggregates_all_duplicate_names(mocker: MockerFixture
     message = str(excinfo.value)
     assert "Duplicate record name: dup1 (n=2)" in message
     assert "Duplicate record name: dup2 (n=2)" in message
+
+
+def test_list_table_records_respects_max_records(mocker: MockerFixture) -> None:
+    """max_records caps the total returned and sizes the first fetch to the limit."""
+    page_1 = {"1": _named_record("1", "r1"), "2": _named_record("2", "r2")}
+    page_2 = {"3": _named_record("3", "r3"), "4": _named_record("4", "r4")}
+    list_records = mocker.patch(
+        "fglatch.registry._registry.Table.list_records", return_value=iter([page_1, page_2])
+    )
+
+    records = list_table_records("999", max_records=3)
+
+    assert set(records) == {"r1", "r2", "r3"}
+    list_records.assert_called_once_with(page_size=3)
+
+
+def test_list_table_records_max_records_at_or_above_table_size_returns_all(
+    mocker: MockerFixture,
+) -> None:
+    """A cap at or above the table size returns every record, with no error."""
+    page = {"1": _named_record("1", "r1"), "2": _named_record("2", "r2")}
+    mocker.patch("fglatch.registry._registry.Table.list_records", return_value=iter([page]))
+
+    assert set(list_table_records("999", max_records=10)) == {"r1", "r2"}
+
+
+def test_list_table_records_max_records_stops_paging_early(mocker: MockerFixture) -> None:
+    """Enumeration stops once max_records is reached; later pages are not fetched."""
+
+    def _pages() -> Iterator[dict[str, Record]]:
+        yield {"1": _named_record("1", "r1"), "2": _named_record("2", "r2")}
+        raise AssertionError("second page should not be fetched")
+
+    mocker.patch("fglatch.registry._registry.Table.list_records", return_value=_pages())
+
+    records = list_table_records("999", max_records=2)
+
+    assert set(records) == {"r1", "r2"}
+
+
+@pytest.mark.parametrize("max_records", [0, -1], ids=["zero", "negative"])
+def test_list_table_records_rejects_nonpositive_max_records(
+    mocker: MockerFixture, max_records: int
+) -> None:
+    """max_records < 1 is rejected before any records are fetched."""
+    list_records = mocker.patch("fglatch.registry._registry.Table.list_records")
+
+    with pytest.raises(ValueError, match="max_records must be >= 1"):
+        list_table_records("999", max_records=max_records)
+
+    list_records.assert_not_called()

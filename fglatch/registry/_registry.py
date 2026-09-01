@@ -1,5 +1,7 @@
 from collections import Counter
+from collections.abc import Iterator
 from collections.abc import Mapping
+from itertools import islice
 from typing import Any
 from typing import cast
 
@@ -394,7 +396,7 @@ def query_latch_records_by_name(
 
 
 def list_table_records(
-    table_id: str, *, page_size: int = 100, chunk_size: int = 1000
+    table_id: str, *, page_size: int = 100, chunk_size: int = 1000, max_records: int | None = None
 ) -> dict[RecordName, Record]:
     """
     Fetch every record in a table with linked-record names and file/dir paths preloaded.
@@ -408,22 +410,36 @@ def list_table_records(
         table_id: The ID of the table to fetch records from.
         page_size: The number of records fetched per page while enumerating the table.
         chunk_size: The number of file/dir node ids resolved per node-path query.
+        max_records: If set, return at most this many records. The subset is not ordered or stable
+            across calls (Registry pagination has no defined order), so treat it as a preview rather
+            than a reproducible sample; the duplicate-name check then covers only that subset.
 
     Returns:
         A mapping from record name to a fully-preloaded `Record`.
 
     Raises:
         ValidationError: If a linked-record-names GQL response cannot be validated.
-        ValueError: If two or more records in the table share a name.
+        ValueError: If `max_records` is less than 1, or two or more records share a name.
         RuntimeError: If a file/dir node-path query fails while priming paths.
     """
+    if max_records is not None and max_records < 1:
+        raise ValueError(f"max_records must be >= 1, got {max_records}")
+
+    effective_page_size = min(page_size, max_records) if max_records is not None else page_size
+    record_stream: Iterator[Record] = (
+        record
+        for page in Table(id=table_id).list_records(page_size=effective_page_size)
+        for record in page.values()
+    )
+    if max_records is not None:
+        record_stream = islice(record_stream, max_records)
+
     records: dict[RecordName, Record] = {}
     name_counts: Counter[RecordName] = Counter()
-    for page in Table(id=table_id).list_records(page_size=page_size):
-        for record in page.values():
-            name = record.get_name()
-            name_counts[name] += 1
-            records.setdefault(name, record)
+    for record in record_stream:
+        name = record.get_name()
+        name_counts[name] += 1
+        records.setdefault(name, record)
 
     duplicates = [name for name, count in name_counts.items() if count > 1]
     if duplicates:
