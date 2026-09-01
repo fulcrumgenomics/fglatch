@@ -1,5 +1,7 @@
 from collections import Counter
+from collections.abc import Iterator
 from collections.abc import Mapping
+from itertools import islice
 from typing import Any
 from typing import cast
 
@@ -8,6 +10,7 @@ from dateutil.parser import isoparse
 from latch.registry.record import NoSuchColumnError
 from latch.registry.record import Record
 from latch.registry.record import _Cache
+from latch.registry.table import Table
 from latch.registry.types import Column
 from latch.registry.types import InvalidValue
 from latch.registry.types import RecordValue
@@ -21,6 +24,7 @@ from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
 
+from fglatch.ldata._node_paths import _preload_file_paths
 from fglatch.type_aliases import RecordName
 
 
@@ -204,9 +208,14 @@ class CatalogSamplesQueryResponse(_FrozenModel):
     catalog_samples: CatalogSamples = Field(alias="catalogSamples")
 
 
+# `removed: {equalTo: false}` excludes soft-deleted records: Latch's name-uniqueness constraint
+# holds only over live records, so an unfiltered query can return several same-named records for a
+# name that is unique among the live ones (a spurious duplicate). `removed` is NOT NULL (the SDK
+# filters experiments the same way, `registry/project.py` `condition: {removed: false}`), so exact
+# `equalTo: false` keeps every live record.
 _RECORDS_QUERY = gql.gql("""
     query Query($sampleNames: [String!]) {
-        catalogSamples(filter: {name: {in: $sampleNames}}) {
+        catalogSamples(filter: {name: {in: $sampleNames}, removed: {equalTo: false}}) {
             nodes {
                 id
                 name
@@ -222,7 +231,7 @@ _RECORDS_QUERY = gql.gql("""
 
 _RECORDS_WITH_VALUES_QUERY = gql.gql("""
     query Query($sampleNames: [String!]) {
-        catalogSamples(filter: {name: {in: $sampleNames}}) {
+        catalogSamples(filter: {name: {in: $sampleNames}, removed: {equalTo: false}}) {
             nodes {
                 id
                 name
@@ -281,7 +290,9 @@ def _preload_linked_record_names(records: Mapping[RecordName, Record]) -> None:
     Args:
         records: The records whose values may contain linked records.
     """
-    linked: dict[str, Record] = {}
+    # A linked id can appear in several cells; `to_python_literal` mints a fresh Record for each, so
+    # every instance of an id is collected and primed (not just the last one seen).
+    linked: dict[str, list[Record]] = {}
     for record in records.values():
         # load_if_missing=False respects the user's choice of `load_values`.
         values = record.get_values(load_if_missing=False)
@@ -289,12 +300,9 @@ def _preload_linked_record_names(records: Mapping[RecordName, Record]) -> None:
             continue
 
         for value in values.values():
-            if isinstance(value, Record):
-                linked[value.id] = value
-            elif isinstance(value, list):
-                for item in value:
-                    if isinstance(item, Record):
-                        linked[item.id] = item
+            for item in value if isinstance(value, list) else (value,):
+                if isinstance(item, Record):
+                    linked.setdefault(item.id, []).append(item)
 
     if not linked:
         return
@@ -305,7 +313,11 @@ def _preload_linked_record_names(records: Mapping[RecordName, Record]) -> None:
     )
     response = CatalogSamplesQueryResponse.model_validate(data)
     for node in response.catalog_samples.nodes:
-        object.__setattr__(linked[str(node.id)], "_cache", node.to_cache())
+        # Instances of one id share a cache: same record, so identical data, and a later lazy load
+        # through any instance repopulates the shared cache for all of them.
+        cache = node.to_cache()
+        for record in linked.get(str(node.id), []):
+            object.__setattr__(record, "_cache", cache)
 
 
 def query_latch_records_by_name(
@@ -387,5 +399,64 @@ def query_latch_records_by_name(
 
     if load_values:
         _preload_linked_record_names(records)
+
+    return records
+
+
+def list_table_records(
+    table_id: str, *, page_size: int = 100, chunk_size: int = 1000, max_records: int | None = None
+) -> dict[RecordName, Record]:
+    """
+    Fetch every record in a table with linked-record names and file/dir paths preloaded.
+
+    Enumerates the table, then resolves and installs onto each record's cache the two remaining
+    per-cell round-trip sources, so a downstream `from_record`/serializer makes no network request
+    for resolvable cells: linked-record names and file/dir readable paths. A file cell whose node
+    cannot be resolved keeps its raw `latch://<id>.node` path (and would still round-trip).
+
+    Args:
+        table_id: The ID of the table to fetch records from.
+        page_size: The number of records fetched per page while enumerating the table.
+        chunk_size: The number of file/dir node ids resolved per node-path query.
+        max_records: If set, return at most this many records. The subset is not ordered or stable
+            across calls (Registry pagination has no defined order), so treat it as a preview rather
+            than a reproducible sample; the duplicate-name check then covers only that subset.
+
+    Returns:
+        A mapping from record name to a fully-preloaded `Record`.
+
+    Raises:
+        ValidationError: If a linked-record-names GQL response cannot be validated.
+        ValueError: If `max_records` is less than 1, or two or more records share a name.
+        RuntimeError: If a file/dir node-path query fails while priming paths.
+    """
+    if max_records is not None and max_records < 1:
+        raise ValueError(f"max_records must be >= 1, got {max_records}")
+
+    effective_page_size = min(page_size, max_records) if max_records is not None else page_size
+    record_stream: Iterator[Record] = (
+        record
+        for page in Table(id=table_id).list_records(page_size=effective_page_size)
+        for record in page.values()
+    )
+    if max_records is not None:
+        record_stream = islice(record_stream, max_records)
+
+    records: dict[RecordName, Record] = {}
+    name_counts: Counter[RecordName] = Counter()
+    for record in record_stream:
+        name = record.get_name()
+        name_counts[name] += 1
+        records.setdefault(name, record)
+
+    duplicates = [name for name, count in name_counts.items() if count > 1]
+    if duplicates:
+        detail = "\n".join(
+            f"Duplicate record name: {name} (n={name_counts[name]})" for name in duplicates
+        )
+        raise ValueError(f"Could not list records in table {table_id}:\n{detail}")
+
+    _preload_linked_record_names(records)
+    _preload_file_paths(records.values(), chunk_size=chunk_size)
 
     return records

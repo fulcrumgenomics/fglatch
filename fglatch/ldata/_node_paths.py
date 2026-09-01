@@ -1,7 +1,13 @@
 from collections.abc import Iterable
+from collections.abc import Mapping
 from enum import StrEnum
+from typing import Any
 
 import gql
+from latch.registry.record import Record
+from latch.types.directory import LatchDir
+from latch.types.file import LatchFile
+from latch.types.utils import is_absolute_node_path
 from latch.types.utils import old_style_path
 from latch_sdk_gql import JsonValue
 from latch_sdk_gql.execute import execute
@@ -106,3 +112,53 @@ def resolve_node_paths(node_ids: Iterable[str], *, chunk_size: int = 1000) -> di
         )
 
     return resolved
+
+
+def _rewrite_node_path(value: Any, node_paths: Mapping[str, str]) -> Any:
+    """Rebuild a file/dir node-path cell from `node_paths`; return non-file values unchanged."""
+    if not isinstance(value, (LatchFile, LatchDir)) or value.remote_path is None:
+        return value
+    match = is_absolute_node_path.match(value.remote_path)
+    if match is None:
+        return value
+    path = node_paths.get(match.group("node_id"))
+    if path is None:
+        return value
+    # Registry cells carry only a remote path, so reconstructing from it preserves the whole cell.
+    return type(value)(path)
+
+
+def _collect_file_node_ids(records: Iterable[Record]) -> list[str]:
+    """The distinct file/dir node ids referenced by `records`' file cells, in first-seen order."""
+    node_ids: dict[str, None] = {}  # dict as an ordered set
+    for record in records:
+        values = record.get_values(load_if_missing=False)
+        if values is None:
+            continue
+        for value in values.values():
+            for item in value if isinstance(value, list) else (value,):
+                if isinstance(item, (LatchFile, LatchDir)) and item.remote_path is not None:
+                    # Mirror format_path's gate: it round-trips only on a bare latch://<id>.node.
+                    match = is_absolute_node_path.match(item.remote_path)
+                    if match is not None:
+                        node_ids[match.group("node_id")] = None
+    return list(node_ids)
+
+
+def _preload_file_paths(records: Iterable[Record], *, chunk_size: int = 1000) -> None:
+    """Resolve every file/dir node path in `records`' values and rewrite the cells in place."""
+    records = list(records)
+    node_ids = _collect_file_node_ids(records)
+    if not node_ids:
+        return
+
+    node_paths = resolve_node_paths(node_ids, chunk_size=chunk_size)
+    for record in records:
+        values = record.get_values(load_if_missing=False)
+        if values is None:
+            continue
+        for key, value in values.items():
+            if isinstance(value, list):
+                values[key] = [_rewrite_node_path(item, node_paths) for item in value]
+            else:
+                values[key] = _rewrite_node_path(value, node_paths)

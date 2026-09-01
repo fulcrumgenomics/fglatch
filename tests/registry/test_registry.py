@@ -1,18 +1,27 @@
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
 from dateutil.parser import isoparse
+from graphql import DocumentNode
+from graphql import print_ast
 from latch.registry.record import NoSuchColumnError
 from latch.registry.record import Record
 from latch.registry.table import Table
+from latch.types.file import LatchFile
 from pydantic import ValidationError
 from pytest_mock import MockerFixture
 
 from fglatch.registry import LatchRecordModel
+from fglatch.registry import list_table_records
 from fglatch.registry import query_latch_records_by_name
+from fglatch.registry._registry import _RECORDS_BY_ID_QUERY
+from fglatch.registry._registry import _RECORDS_QUERY
+from fglatch.registry._registry import _RECORDS_WITH_VALUES_QUERY
 from fglatch.registry._registry import LatchNode
 from fglatch.registry._registry import _preload_linked_record_names
 from fglatch.type_aliases import RecordName
+from tests.conftest import cache_with_values
 from tests.constants import MOCK_TABLE_1_ID
 
 
@@ -178,6 +187,21 @@ def test_query_latch_records_by_name_raises_if_response_cannot_be_validated(
 
     with pytest.raises(ValidationError):
         query_latch_records_by_name(["name_1", "name_2"], table_id="999")
+
+
+@pytest.mark.parametrize(
+    "query", [_RECORDS_QUERY, _RECORDS_WITH_VALUES_QUERY], ids=["light", "with-values"]
+)
+def test_by_name_queries_exclude_soft_deleted_records(query: DocumentNode) -> None:
+    """Both by-name queries carry the removed-filter clause (a structural guard, not end-to-end)."""
+    normalized = "".join(print_ast(query).split())
+    assert "removed:{equalTo:false}" in normalized
+
+
+def test_by_id_query_does_not_filter_removed() -> None:
+    """By-id is keyed on unique ids, so a soft-deleted linked target is still name-primed."""
+    normalized = "".join(print_ast(_RECORDS_BY_ID_QUERY).split())
+    assert "removed" not in normalized
 
 
 @pytest.fixture
@@ -419,6 +443,51 @@ def test_preload_linked_record_names_ignores_records_without_values(mocker: Mock
     mock_execute.assert_not_called()
 
 
+def test_query_latch_records_by_name_primes_shared_linked_id_across_records(
+    mocker: MockerFixture,
+) -> None:
+    """Two records linking the same id each prime their own instance, not just one."""
+
+    # to_python_literal mints a fresh Record per link cell, so name_1 and name_2 hold distinct
+    # instances of the linked record; both must be primed, or one falls back to a lazy load.
+    def _linked(record_id: int, name: str) -> dict[str, Any]:
+        return {
+            "id": record_id,
+            "name": name,
+            "experiment": {
+                "id": 999,
+                "catalogExperimentColumnDefinitionsByExperimentId": {
+                    "nodes": [_link_column_def("seq")]
+                },
+            },
+            "catalogSampleColumnDataBySampleId": {
+                "nodes": [{"key": "seq", "data": _link_value("123")}]
+            },
+        }
+
+    values_response = {"catalogSamples": {"nodes": [_linked(1, "name_1"), _linked(2, "name_2")]}}
+    id_response = {
+        "catalogSamples": {"nodes": [{"id": 123, "name": "seq_a", "experiment": {"id": 555}}]}
+    }
+    mock_execute = mocker.patch(
+        "fglatch.registry._registry.execute", side_effect=[values_response, id_response]
+    )
+
+    records = query_latch_records_by_name(["name_1", "name_2"], table_id="999", load_values=True)
+
+    links: list[Record] = []
+    for name in ("name_1", "name_2"):
+        values = records[name].get_values(load_if_missing=False)
+        assert values is not None
+        link = values["seq"]
+        assert isinstance(link, Record)
+        assert link.get_name(load_if_missing=False) == "seq_a"  # primed — no lazy load
+        links.append(link)
+
+    assert links[0] is not links[1]  # distinct instances of the same id, each primed
+    assert mock_execute.call_count == 2  # values query + one id query, no lazy fallback
+
+
 class MockRecord(LatchRecordModel):
     """
     A fake record for testing.
@@ -640,3 +709,130 @@ def test_to_record_light_node_leaves_values_lazy() -> None:
     assert record.get_name(load_if_missing=False) == "name_1"
     assert record.get_table_id(load_if_missing=False) == "999"
     assert record.get_values(load_if_missing=False) is None
+
+
+def test_list_table_records_preloads_links_and_files(mocker: MockerFixture) -> None:
+    """Every record comes back name-keyed with linked names and file paths preloaded."""
+    link = Record("123")
+    record = Record("1")
+    object.__setattr__(
+        record,
+        "_cache",
+        cache_with_values(name="r", values={"seq": link, "f": LatchFile("latch://9.node")}),
+    )
+    mocker.patch(
+        "fglatch.registry._registry.Table.list_records", return_value=iter([{"1": record}])
+    )
+    mocker.patch(
+        "fglatch.registry._registry.execute",
+        return_value={
+            "catalogSamples": {"nodes": [{"id": 123, "name": "seq_a", "experiment": {"id": 5}}]}
+        },
+    )
+    mocker.patch(
+        "fglatch.ldata._node_paths.execute", return_value={"p0": "mount/b/a.txt", "o0": None}
+    )
+
+    records = list_table_records("999")
+
+    assert set(records) == {"r"}
+    values = records["r"].get_values(load_if_missing=False)
+    assert values is not None
+    seq, file_cell = values["seq"], values["f"]
+    assert isinstance(seq, Record)
+    assert isinstance(file_cell, LatchFile)
+    assert seq.get_name(load_if_missing=False) == "seq_a"
+    assert file_cell.remote_path == "latch://b.mount/a.txt"
+
+
+def _named_record(record_id: str, name: str) -> Record:
+    """A `Record` with `name` primed and empty values (no priming network on preload)."""
+    record = Record(record_id)
+    object.__setattr__(record, "_cache", cache_with_values(name=name, values={}))
+    return record
+
+
+def test_list_table_records_consumes_all_pages(mocker: MockerFixture) -> None:
+    """Records from every page are returned, name-keyed."""
+    mocker.patch(
+        "fglatch.registry._registry.Table.list_records",
+        return_value=iter([{"1": _named_record("1", "r1")}, {"2": _named_record("2", "r2")}]),
+    )
+
+    records = list_table_records("999")
+
+    assert set(records) == {"r1", "r2"}
+
+
+def test_list_table_records_empty_table_returns_empty(mocker: MockerFixture) -> None:
+    """A table with no records returns an empty mapping."""
+    mocker.patch("fglatch.registry._registry.Table.list_records", return_value=iter([]))
+
+    assert list_table_records("999") == {}
+
+
+def test_list_table_records_aggregates_all_duplicate_names(mocker: MockerFixture) -> None:
+    """All duplicated names are collected into one raised error, not just the first."""
+    page = {
+        rid: _named_record(rid, name)
+        for rid, name in (("1", "dup1"), ("2", "dup1"), ("3", "dup2"), ("4", "dup2"))
+    }
+    mocker.patch("fglatch.registry._registry.Table.list_records", return_value=iter([page]))
+
+    with pytest.raises(ValueError) as excinfo:
+        list_table_records("999")
+
+    message = str(excinfo.value)
+    assert "Duplicate record name: dup1 (n=2)" in message
+    assert "Duplicate record name: dup2 (n=2)" in message
+
+
+def test_list_table_records_respects_max_records(mocker: MockerFixture) -> None:
+    """max_records caps the total returned and sizes the first fetch to the limit."""
+    page_1 = {"1": _named_record("1", "r1"), "2": _named_record("2", "r2")}
+    page_2 = {"3": _named_record("3", "r3"), "4": _named_record("4", "r4")}
+    list_records = mocker.patch(
+        "fglatch.registry._registry.Table.list_records", return_value=iter([page_1, page_2])
+    )
+
+    records = list_table_records("999", max_records=3)
+
+    assert set(records) == {"r1", "r2", "r3"}
+    list_records.assert_called_once_with(page_size=3)
+
+
+def test_list_table_records_max_records_at_or_above_table_size_returns_all(
+    mocker: MockerFixture,
+) -> None:
+    """A cap at or above the table size returns every record, with no error."""
+    page = {"1": _named_record("1", "r1"), "2": _named_record("2", "r2")}
+    mocker.patch("fglatch.registry._registry.Table.list_records", return_value=iter([page]))
+
+    assert set(list_table_records("999", max_records=10)) == {"r1", "r2"}
+
+
+def test_list_table_records_max_records_stops_paging_early(mocker: MockerFixture) -> None:
+    """Enumeration stops once max_records is reached; later pages are not fetched."""
+
+    def _pages() -> Iterator[dict[str, Record]]:
+        yield {"1": _named_record("1", "r1"), "2": _named_record("2", "r2")}
+        raise AssertionError("second page should not be fetched")
+
+    mocker.patch("fglatch.registry._registry.Table.list_records", return_value=_pages())
+
+    records = list_table_records("999", max_records=2)
+
+    assert set(records) == {"r1", "r2"}
+
+
+@pytest.mark.parametrize("max_records", [0, -1], ids=["zero", "negative"])
+def test_list_table_records_rejects_nonpositive_max_records(
+    mocker: MockerFixture, max_records: int
+) -> None:
+    """max_records < 1 is rejected before any records are fetched."""
+    list_records = mocker.patch("fglatch.registry._registry.Table.list_records")
+
+    with pytest.raises(ValueError, match="max_records must be >= 1"):
+        list_table_records("999", max_records=max_records)
+
+    list_records.assert_not_called()

@@ -1,9 +1,12 @@
 import warnings
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 from typing import Final
 
 import pytest
 import requests
+from latch.registry.record import _Cache
 from latch.registry.table import Table
 from latch_sdk_config.latch import config
 from latch_sdk_config.user import user_config
@@ -12,6 +15,14 @@ from tests.constants import MOCK_TABLE_1_ID
 
 FULCRUM_WORKSPACE_NAME: Final[str] = "Fulcrum Genomics"
 """The display name of the Fulcrum Genomics Latch workspace."""
+
+
+def cache_with_values(*, name: str, values: dict[str, Any]) -> _Cache:
+    """A `_Cache` shaped like `Table.list_records` output, with the given values (for tests)."""
+    now = datetime(2024, 1, 1)
+    return _Cache(
+        table_id="1", name=name, creation_time=now, last_updated=now, columns={}, values=values
+    )
 
 
 def _latch_api_is_available() -> bool:
