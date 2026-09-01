@@ -1,6 +1,7 @@
 from typing import Any
 
 import pytest
+from latch.registry.record import NoSuchColumnError
 from latch.registry.record import Record
 from latch.registry.table import Table
 from pydantic import ValidationError
@@ -8,6 +9,8 @@ from pytest_mock import MockerFixture
 
 from fglatch.registry import LatchRecordModel
 from fglatch.registry import query_latch_records_by_name
+from fglatch.registry._registry import LatchNode
+from fglatch.registry._registry import _cache_from_catalog_sample
 from fglatch.type_aliases import RecordName
 from tests.constants import MOCK_TABLE_1_ID
 
@@ -215,3 +218,111 @@ def test_from_record_raises_if_wrong_table_id(mocker: MockerFixture) -> None:
 
     with pytest.raises(ValueError, match="Records must come from the table Expected"):
         MockRecord.from_record(mock_record, expected_table_id)
+
+
+@pytest.fixture
+def full_catalog_sample() -> dict[str, Any]:
+    """A `catalogSample` node from the values query: id, name, table id, column defs, and data."""
+    return {
+        "id": 1,
+        "name": "mock_record_1",
+        "experiment": {
+            "id": 999,
+            "catalogExperimentColumnDefinitionsByExperimentId": {
+                "nodes": [
+                    {
+                        "key": "foo",
+                        "type": {"type": {"primitive": "string"}, "allowEmpty": False},
+                        "def": None,
+                    },
+                    {
+                        "key": "bar",
+                        "type": {"type": {"primitive": "integer"}, "allowEmpty": False},
+                        "def": None,
+                    },
+                    {
+                        "key": "baz",
+                        "type": {"type": {"primitive": "string"}, "allowEmpty": True},
+                        "def": None,
+                    },
+                ]
+            },
+        },
+        "catalogSampleColumnDataBySampleId": {
+            "nodes": [
+                {"key": "foo", "data": {"value": "hello", "valid": True}},
+                {"key": "bar", "data": {"value": 42, "valid": True}},
+            ]
+        },
+    }
+
+
+def test_cache_from_catalog_sample_primes_name_table_and_values(
+    full_catalog_sample: dict[str, Any],
+) -> None:
+    """It builds a `_Cache` with the sample's name, table id, columns, and converted values."""
+    node = LatchNode.model_validate(full_catalog_sample)
+
+    cache = _cache_from_catalog_sample(node)
+
+    assert cache.name == "mock_record_1"
+    assert cache.table_id == "999"
+
+    assert cache.columns is not None
+    assert set(cache.columns) == {"foo", "bar", "baz"}
+    assert cache.columns["foo"].type is str
+    assert cache.columns["bar"].type is int
+
+    assert cache.values is not None
+    assert cache.values["foo"] == "hello"
+    assert cache.values["bar"] == 42
+
+
+def test_cache_from_catalog_sample_maps_missing_value_to_none(
+    full_catalog_sample: dict[str, Any],
+) -> None:
+    """
+    A column with no datum resolves to `None`, matching `Record.load()`.
+
+    `Record.load()` writes `InvalidValue("")` for a missing required value and then unconditionally
+    overwrites it with `None` (record.py:200-204), so every missing value ends up `None` regardless
+    of whether the column is required. We mirror that quirk so primed records are indistinguishable
+    from lazily-loaded ones.
+    """
+    # Add a required (allowEmpty=False) column that has no datum, alongside the optional "baz".
+    full_catalog_sample["experiment"]["catalogExperimentColumnDefinitionsByExperimentId"][
+        "nodes"
+    ].append({
+        "key": "qux",
+        "type": {"type": {"primitive": "string"}, "allowEmpty": False},
+        "def": None,
+    })
+    node = LatchNode.model_validate(full_catalog_sample)
+
+    cache = _cache_from_catalog_sample(node)
+
+    assert cache.values is not None
+    assert cache.values["baz"] is None  # optional column, missing datum
+    assert cache.values["qux"] is None  # required column, missing datum (InvalidValue overwritten)
+
+
+def test_cache_from_catalog_sample_raises_if_values_not_fetched() -> None:
+    """It raises if the node came from the light query and lacks column definitions/data."""
+    node = LatchNode.model_validate({"id": 1, "name": "x", "experiment": {"id": 999}})
+
+    with pytest.raises(RuntimeError, match="column definitions or data"):
+        _cache_from_catalog_sample(node)
+
+
+def test_cache_from_catalog_sample_raises_on_datum_without_definition(
+    full_catalog_sample: dict[str, Any],
+) -> None:
+    """A value whose column key has no definition raises `NoSuchColumnError`, as `Record.load()`."""
+    full_catalog_sample["catalogSampleColumnDataBySampleId"]["nodes"].append({
+        "key": "ghost",
+        "data": {"value": "boo", "valid": True},
+    })
+    node = LatchNode.model_validate(full_catalog_sample)
+
+    with pytest.raises(NoSuchColumnError):
+        _cache_from_catalog_sample(node)

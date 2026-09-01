@@ -1,9 +1,17 @@
 from collections import Counter
+from typing import Any
 from typing import cast
 
 import gql
+from latch.registry.record import NoSuchColumnError
 from latch.registry.record import Record
 from latch.registry.record import _Cache
+from latch.registry.types import Column
+from latch.registry.types import InvalidValue
+from latch.registry.types import RecordValue
+from latch.registry.upstream_types.values import DBValue
+from latch.registry.utils import to_python_literal
+from latch.registry.utils import to_python_type
 from latch_sdk_gql import JsonArray
 from latch_sdk_gql.execute import execute
 from pydantic import BaseModel
@@ -13,22 +21,63 @@ from pydantic import Field
 from fglatch.type_aliases import RecordName
 
 
+class ColumnDefinition(BaseModel):
+    """A single column definition: its key and its raw Registry type."""
+
+    model_config = ConfigDict(frozen=True)
+
+    key: str
+    # Opaque `DBType`, handed straight to the SDK's `to_python_type` / `to_python_literal` rather
+    # than re-modeled here, so we don't couple to the SDK's recursive Registry-type shapes.
+    type: Any
+
+
+class ColumnDefinitions(BaseModel):
+    """The column definitions returned for an experiment (table)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    nodes: list[ColumnDefinition]
+
+
+class ColumnDatum(BaseModel):
+    """A single column value for a record: its key and its raw Registry value."""
+
+    model_config = ConfigDict(frozen=True)
+
+    key: str
+    # Opaque `DBValue`, handed straight to the SDK's `to_python_literal` (see `ColumnDefinition`).
+    data: Any
+
+
+class ColumnData(BaseModel):
+    """The column values returned for a record."""
+
+    model_config = ConfigDict(frozen=True)
+
+    nodes: list[ColumnDatum]
+
+
 class Experiment(BaseModel):
     """The experiment (i.e. Registry table) that a catalog sample belongs to."""
 
     model_config = ConfigDict(frozen=True)
 
     id: int
+    column_definitions: ColumnDefinitions | None = Field(
+        default=None, alias="catalogExperimentColumnDefinitionsByExperimentId"
+    )
 
 
 class LatchNode(BaseModel):
-    """A single `catalogSample` node: a record's id, name, and owning table id."""
+    """A `catalogSample` node: a record's id, name, table id, and (optionally) its column values."""
 
     model_config = ConfigDict(frozen=True)
 
     id: int
     name: str
     experiment: Experiment
+    column_data: ColumnData | None = Field(default=None, alias="catalogSampleColumnDataBySampleId")
 
 
 class CatalogSamples(BaseModel):
@@ -84,6 +133,69 @@ def _primed_record(node: LatchNode) -> Record:
     object.__setattr__(record, "_cache", cache)
 
     return record
+
+
+def _cache_from_catalog_sample(node: LatchNode) -> _Cache:
+    """
+    Build a fully-populated `_Cache` (name, table id, columns, values) from a catalog sample.
+
+    This mirrors the transform in `latch.registry.record.Record.load()` so a primed record is
+    indistinguishable from one populated by a network `load()`. The SDK's own `to_python_type` and
+    `to_python_literal` are reused, so the value conversion cannot drift from the SDK's.
+
+    Args:
+        node: A catalog sample node that includes column definitions and column data (i.e. one
+            fetched by the values query).
+
+    Returns:
+        A `_Cache` populated with the record's name, table id, columns, and converted values.
+
+    Raises:
+        RuntimeError: If the node lacks column definitions or column data (i.e. it came from the
+            light query rather than the values query).
+        NoSuchColumnError: If a column datum references a column that has no definition.
+        RegistryTransformerException: If a value cannot be converted to its Python type.
+    """
+    if node.experiment.column_definitions is None or node.column_data is None:
+        raise RuntimeError(
+            "catalog sample is missing column definitions or data; "
+            "it must be fetched with the values query"
+        )
+
+    columns: dict[str, Column] = {
+        defn.key: Column(defn.key, to_python_type(defn.type["type"]), defn.type)
+        for defn in node.experiment.column_definitions.nodes
+    }
+
+    column_values: dict[str, DBValue] = {datum.key: datum.data for datum in node.column_data.nodes}
+
+    values: dict[str, RecordValue] = {}
+    for key, db_value in column_values.items():
+        column = columns.get(key)
+        if column is None:
+            raise NoSuchColumnError(key)
+
+        values[key] = to_python_literal(db_value, column.upstream_type["type"])
+
+    for key, column in columns.items():
+        if key in values:
+            continue
+
+        # NB: this mirrors a quirk in `Record.load()` (record.py:200-204): it sets
+        # `InvalidValue("")` for a missing required value and then unconditionally overwrites it
+        # with `None`, so every missing value ends up `None`. We reproduce it exactly so a primed
+        # record matches a lazily-loaded one rather than silently diverging.
+        if not column.upstream_type["allowEmpty"]:
+            values[key] = InvalidValue("")
+
+        values[key] = None
+
+    return _Cache(
+        table_id=str(node.experiment.id),
+        name=node.name,
+        columns=columns,
+        values=values,
+    )
 
 
 def query_latch_records_by_name(
