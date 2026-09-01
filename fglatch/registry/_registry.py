@@ -208,9 +208,12 @@ class CatalogSamplesQueryResponse(_FrozenModel):
     catalog_samples: CatalogSamples = Field(alias="catalogSamples")
 
 
+# `removed: {equalTo: false}` excludes soft-deleted records: Latch's name-uniqueness constraint
+# holds only over live records, so an unfiltered query can return several same-named records for a
+# name that is unique among the live ones (a spurious duplicate).
 _RECORDS_QUERY = gql.gql("""
     query Query($sampleNames: [String!]) {
-        catalogSamples(filter: {name: {in: $sampleNames}}) {
+        catalogSamples(filter: {name: {in: $sampleNames}, removed: {equalTo: false}}) {
             nodes {
                 id
                 name
@@ -226,7 +229,7 @@ _RECORDS_QUERY = gql.gql("""
 
 _RECORDS_WITH_VALUES_QUERY = gql.gql("""
     query Query($sampleNames: [String!]) {
-        catalogSamples(filter: {name: {in: $sampleNames}}) {
+        catalogSamples(filter: {name: {in: $sampleNames}, removed: {equalTo: false}}) {
             nodes {
                 id
                 name

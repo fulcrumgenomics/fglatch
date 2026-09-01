@@ -3,6 +3,8 @@ from typing import Any
 
 import pytest
 from dateutil.parser import isoparse
+from graphql import DocumentNode
+from graphql import print_ast
 from latch.registry.record import NoSuchColumnError
 from latch.registry.record import Record
 from latch.registry.table import Table
@@ -13,6 +15,8 @@ from pytest_mock import MockerFixture
 from fglatch.registry import LatchRecordModel
 from fglatch.registry import list_table_records
 from fglatch.registry import query_latch_records_by_name
+from fglatch.registry._registry import _RECORDS_QUERY
+from fglatch.registry._registry import _RECORDS_WITH_VALUES_QUERY
 from fglatch.registry._registry import LatchNode
 from fglatch.registry._registry import _preload_linked_record_names
 from fglatch.type_aliases import RecordName
@@ -182,6 +186,15 @@ def test_query_latch_records_by_name_raises_if_response_cannot_be_validated(
 
     with pytest.raises(ValidationError):
         query_latch_records_by_name(["name_1", "name_2"], table_id="999")
+
+
+@pytest.mark.parametrize(
+    "query", [_RECORDS_QUERY, _RECORDS_WITH_VALUES_QUERY], ids=["light", "with-values"]
+)
+def test_by_name_queries_exclude_soft_deleted_records(query: DocumentNode) -> None:
+    """Both by-name queries filter out removed records, which can collide on a live name."""
+    normalized = "".join(print_ast(query).split())
+    assert "removed:{equalTo:false}" in normalized
 
 
 @pytest.fixture
