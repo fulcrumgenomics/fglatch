@@ -285,7 +285,9 @@ def _preload_linked_record_names(records: Mapping[RecordName, Record]) -> None:
     Args:
         records: The records whose values may contain linked records.
     """
-    linked: dict[str, Record] = {}
+    # A linked id can appear in several cells; `to_python_literal` mints a fresh Record for each, so
+    # every instance of an id is collected and primed (not just the last one seen).
+    linked: dict[str, list[Record]] = {}
     for record in records.values():
         # load_if_missing=False respects the user's choice of `load_values`.
         values = record.get_values(load_if_missing=False)
@@ -293,12 +295,9 @@ def _preload_linked_record_names(records: Mapping[RecordName, Record]) -> None:
             continue
 
         for value in values.values():
-            if isinstance(value, Record):
-                linked[value.id] = value
-            elif isinstance(value, list):
-                for item in value:
-                    if isinstance(item, Record):
-                        linked[item.id] = item
+            for item in value if isinstance(value, list) else (value,):
+                if isinstance(item, Record):
+                    linked.setdefault(item.id, []).append(item)
 
     if not linked:
         return
@@ -309,7 +308,9 @@ def _preload_linked_record_names(records: Mapping[RecordName, Record]) -> None:
     )
     response = CatalogSamplesQueryResponse.model_validate(data)
     for node in response.catalog_samples.nodes:
-        object.__setattr__(linked[str(node.id)], "_cache", node.to_cache())
+        cache = node.to_cache()
+        for record in linked.get(str(node.id), []):
+            object.__setattr__(record, "_cache", cache)
 
 
 def query_latch_records_by_name(

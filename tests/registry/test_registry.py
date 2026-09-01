@@ -423,6 +423,44 @@ def test_preload_linked_record_names_ignores_records_without_values(mocker: Mock
     mock_execute.assert_not_called()
 
 
+def test_query_latch_records_by_name_primes_shared_linked_id_across_records(
+    mocker: MockerFixture,
+) -> None:
+    """Two records linking the same id each prime their own instance, not just one."""
+
+    # to_python_literal mints a fresh Record per link cell, so name_1 and name_2 hold distinct
+    # instances of the linked record; both must be primed, or one falls back to a lazy load.
+    def _linked(record_id: int, name: str) -> dict[str, Any]:
+        return {
+            "id": record_id,
+            "name": name,
+            "experiment": {
+                "id": 999,
+                "catalogExperimentColumnDefinitionsByExperimentId": {
+                    "nodes": [_link_column_def("seq")]
+                },
+            },
+            "catalogSampleColumnDataBySampleId": {
+                "nodes": [{"key": "seq", "data": _link_value("123")}]
+            },
+        }
+
+    values_response = {"catalogSamples": {"nodes": [_linked(1, "name_1"), _linked(2, "name_2")]}}
+    id_response = {
+        "catalogSamples": {"nodes": [{"id": 123, "name": "seq_a", "experiment": {"id": 555}}]}
+    }
+    mocker.patch("fglatch.registry._registry.execute", side_effect=[values_response, id_response])
+
+    records = query_latch_records_by_name(["name_1", "name_2"], table_id="999", load_values=True)
+
+    for name in ("name_1", "name_2"):
+        values = records[name].get_values(load_if_missing=False)
+        assert values is not None
+        link = values["seq"]
+        assert isinstance(link, Record)
+        assert link.get_name(load_if_missing=False) == "seq_a"  # both primed — no lazy load
+
+
 class MockRecord(LatchRecordModel):
     """
     A fake record for testing.
