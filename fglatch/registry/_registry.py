@@ -8,6 +8,7 @@ from dateutil.parser import isoparse
 from latch.registry.record import NoSuchColumnError
 from latch.registry.record import Record
 from latch.registry.record import _Cache
+from latch.registry.table import Table
 from latch.registry.types import Column
 from latch.registry.types import InvalidValue
 from latch.registry.types import RecordValue
@@ -21,6 +22,7 @@ from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
 
+from fglatch.ldata._node_paths import _prime_file_paths
 from fglatch.type_aliases import RecordName
 
 
@@ -387,5 +389,34 @@ def query_latch_records_by_name(
 
     if load_values:
         _preload_linked_record_names(records)
+
+    return records
+
+
+def list_table_records(
+    table_id: str, *, page_size: int = 100, chunk_size: int = 1000
+) -> dict[RecordName, Record]:
+    """
+    Fetch every record in a table with linked-record names and file/dir paths primed.
+
+    Enumerates the table, then resolves and installs onto each record's cache the two remaining
+    per-cell round-trip sources, so a downstream `from_record`/serializer makes no network request:
+    linked-record names and file/dir readable paths.
+
+    Args:
+        table_id: The ID of the table to fetch records from.
+        page_size: The number of records fetched per page while enumerating the table.
+        chunk_size: The number of file/dir node ids resolved per node-path query.
+
+    Returns:
+        A mapping from record name to a fully-primed `Record`.
+    """
+    records: dict[RecordName, Record] = {}
+    for page in Table(id=table_id).list_records(page_size=page_size):
+        for record in page.values():
+            records[record.get_name()] = record
+
+    _preload_linked_record_names(records)
+    _prime_file_paths(records.values(), chunk_size=chunk_size)
 
     return records

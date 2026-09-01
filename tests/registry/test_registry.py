@@ -1,19 +1,31 @@
+from datetime import datetime
 from typing import Any
 
 import pytest
 from dateutil.parser import isoparse
 from latch.registry.record import NoSuchColumnError
 from latch.registry.record import Record
+from latch.registry.record import _Cache
 from latch.registry.table import Table
+from latch.types.file import LatchFile
 from pydantic import ValidationError
 from pytest_mock import MockerFixture
 
 from fglatch.registry import LatchRecordModel
+from fglatch.registry import list_table_records
 from fglatch.registry import query_latch_records_by_name
 from fglatch.registry._registry import LatchNode
 from fglatch.registry._registry import _preload_linked_record_names
 from fglatch.type_aliases import RecordName
 from tests.constants import MOCK_TABLE_1_ID
+
+
+def _cache_with_values(*, name: str, values: dict[str, Any]) -> _Cache:
+    """A `_Cache` shaped like `Table.list_records` output, with the given values."""
+    now = datetime(2024, 1, 1)
+    return _Cache(
+        table_id="1", name=name, creation_time=now, last_updated=now, columns={}, values=values
+    )
 
 
 @pytest.mark.requires_latch_registry
@@ -640,3 +652,37 @@ def test_to_record_light_node_leaves_values_lazy() -> None:
     assert record.get_name(load_if_missing=False) == "name_1"
     assert record.get_table_id(load_if_missing=False) == "999"
     assert record.get_values(load_if_missing=False) is None
+
+
+def test_list_table_records_primes_links_and_files(mocker: MockerFixture) -> None:
+    """Every record comes back name-keyed with linked names and file paths primed, no extra load."""
+    link = Record("123")
+    record = Record("1")
+    object.__setattr__(
+        record,
+        "_cache",
+        _cache_with_values(name="r", values={"seq": link, "f": LatchFile("latch://9.node")}),
+    )
+    mocker.patch(
+        "fglatch.registry._registry.Table.list_records", return_value=iter([{"1": record}])
+    )
+    mocker.patch(
+        "fglatch.registry._registry.execute",
+        return_value={
+            "catalogSamples": {"nodes": [{"id": 123, "name": "seq_a", "experiment": {"id": 5}}]}
+        },
+    )
+    mocker.patch(
+        "fglatch.ldata._node_paths.execute", return_value={"p0": "mount/b/a.txt", "o0": None}
+    )
+
+    records = list_table_records("999")
+
+    assert set(records) == {"r"}
+    values = records["r"].get_values(load_if_missing=False)
+    assert values is not None
+    seq, file_cell = values["seq"], values["f"]
+    assert isinstance(seq, Record)
+    assert isinstance(file_cell, LatchFile)
+    assert seq.get_name(load_if_missing=False) == "seq_a"
+    assert file_cell.remote_path == "latch://b.mount/a.txt"
