@@ -93,7 +93,7 @@ class LatchNode(_FrozenModel):
 
         Mirrors the transform in `latch.registry.record.Record.load()`. A preloaded record built
         from our query is consistent from one populated by `Record.load()`.
-        
+
         If the node includes column data (i.e. it was fetched by the values query), its columns and
         converted values are built too; otherwise only the name, table id, and timestamps are set
         and values remain to be lazily loaded with `Record.get_values()`.
@@ -311,16 +311,13 @@ def query_latch_records_by_name(
 
     name_counts: Counter[RecordName] = Counter(node.name for node in nodes)
 
-    errs: list[str] = []
+    query_errs: list[str] = []
     for record_name in record_names:
         count: int = name_counts[record_name]
         if count == 0:
-            errs.append(f"No record found with name: {record_name}")
+            query_errs.append(f"No record found with name: {record_name}")
         elif count > 1:
-            errs.append(f"Duplicate record name: {record_name} (n={count})")
-
-    if errs:
-        raise ValueError("Could not find unique records for queried names" + "\n".join(errs))
+            query_errs.append(f"Duplicate record name: {record_name} (n={count})")
 
     # Build each record, preloading its cache from the node.
     records: dict[RecordName, Record] = {}
@@ -331,7 +328,14 @@ def query_latch_records_by_name(
         except (RegistryTransformerException, NoSuchColumnError) as error:
             value_errs.append(f"{node.name} (id={node.id}): {error}")
 
+    messages: list[str] = []
+    if query_errs:
+        messages.append(
+            "Could not find unique records for queried names:\n" + "\n".join(query_errs)
+        )
     if value_errs:
-        raise ValueError("Failed to load values for records:\n" + "\n".join(value_errs))
+        messages.append("Failed to load values for records:\n" + "\n".join(value_errs))
+    if messages:
+        raise ValueError("\n\n".join(messages))
 
     return records
