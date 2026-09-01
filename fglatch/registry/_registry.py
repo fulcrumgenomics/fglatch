@@ -22,75 +22,55 @@ from pydantic import Field
 
 from fglatch.type_aliases import RecordName
 
+class _FrozenModel(BaseModel):
+    """A frozen Pydantic model that can be used as a base class for other models."""
 
-class ColumnDefinition(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+
+class ColumnDefinition(_FrozenModel):
     """A single column definition: its key and its raw Registry type."""
-
-    model_config = ConfigDict(frozen=True)
-
     key: str
-    # Opaque `DBType`, handed straight to the SDK's `to_python_type` / `to_python_literal` rather
-    # than re-modeled here, so we don't couple to the SDK's recursive Registry-type shapes.
-    type: Any
+    type: Any  # Opaque `DBType`, passed to the SDK's `to_python_type` / `to_python_literal`.
 
 
-class ColumnDefinitions(BaseModel):
+class ColumnDefinitions(_FrozenModel):
     """The column definitions returned for an experiment (table)."""
-
-    model_config = ConfigDict(frozen=True)
-
     nodes: list[ColumnDefinition]
 
 
-class ColumnDatum(BaseModel):
+class ColumnDatum(_FrozenModel):
     """A single column value for a record: its key and its raw Registry value."""
-
-    model_config = ConfigDict(frozen=True)
-
     key: str
-    # Opaque `DBValue`, handed straight to the SDK's `to_python_literal` (see `ColumnDefinition`).
-    data: Any
+    data: Any  # Opaque `DBType`, passed to the SDK's `to_python_type` / `to_python_literal`.
 
 
-class ColumnData(BaseModel):
+class ColumnData(_FrozenModel):
     """The column values returned for a record."""
-
-    model_config = ConfigDict(frozen=True)
-
     nodes: list[ColumnDatum]
 
 
-class CatalogEvent(BaseModel):
+class CatalogEvent(_FrozenModel):
     """A single catalog event for a record (e.g. an update), carrying its timestamp."""
-
-    model_config = ConfigDict(frozen=True)
-
     time: str
 
 
-class CatalogEvents(BaseModel):
+class CatalogEvents(_FrozenModel):
     """The most recent catalog events for a record."""
-
-    model_config = ConfigDict(frozen=True)
-
     nodes: list[CatalogEvent]
 
 
-class Experiment(BaseModel):
+class Experiment(_FrozenModel):
     """The experiment (i.e. Registry table) that a catalog sample belongs to."""
-
-    model_config = ConfigDict(frozen=True)
-
     id: int
     column_definitions: ColumnDefinitions | None = Field(
-        default=None, alias="catalogExperimentColumnDefinitionsByExperimentId"
+        default=None,
+        alias="catalogExperimentColumnDefinitionsByExperimentId",
     )
 
 
-class LatchNode(BaseModel):
+class LatchNode(_FrozenModel):
     """A `catalogSample` node: id, name, table id, and (optionally) values and timestamps."""
-
-    model_config = ConfigDict(frozen=True)
 
     id: int
     name: str
@@ -100,18 +80,14 @@ class LatchNode(BaseModel):
     events: CatalogEvents | None = Field(default=None, alias="catalogEventsBySampleId")
 
 
-class CatalogSamples(BaseModel):
+class CatalogSamples(_FrozenModel):
     """The `nodes` list returned under `catalogSamples`."""
-
-    model_config = ConfigDict(frozen=True)
 
     nodes: list[LatchNode]
 
 
-class CatalogSamplesQueryResponse(BaseModel):
+class CatalogSamplesQueryResponse(_FrozenModel):
     """The top-level response returned by the records query."""
-
-    model_config = ConfigDict(frozen=True)
 
     catalog_samples: CatalogSamples = Field(alias="catalogSamples")
 
@@ -167,28 +143,6 @@ _RECORDS_WITH_VALUES_QUERY = gql.gql("""
 """Additionally fetch each record's column definitions and values so they can be preloaded."""
 
 
-def _record_with_cache(record_id: str, cache: _Cache) -> Record:
-    """
-    Create a `Record` and attach a pre-populated cache to it.
-
-    Args:
-        record_id: The record's unique id.
-        cache: The cache to attach to the record.
-
-    Returns:
-        A `Record` whose `_cache` is the given cache.
-    """
-    record = Record(record_id)
-
-    # `Record` is a frozen dataclass whose `_cache` field is `init=False`, so neither the
-    # constructor nor `dataclasses.replace()` can inject a populated cache. `object.__setattr__` is
-    # the sanctioned way to write a field on a frozen dataclass — it is exactly the mechanism a
-    # frozen dataclass's own `__post_init__` uses.
-    object.__setattr__(record, "_cache", cache)
-
-    return record
-
-
 def _preloaded_record(node: LatchNode) -> Record:
     """
     Build a `Record` with its name and table id preloaded from the query response.
@@ -201,7 +155,10 @@ def _preloaded_record(node: LatchNode) -> Record:
         network load.
     """
     cache = _Cache(table_id=str(node.experiment.id), name=node.name)
-    return _record_with_cache(str(node.id), cache)
+    record = Record(str(node.id))
+    object.__setattr__(record, "_cache", cache)
+
+    return record
 
 
 def _records_with_preloaded_values(nodes: list[LatchNode]) -> dict[RecordName, Record]:
@@ -229,7 +186,10 @@ def _records_with_preloaded_values(nodes: list[LatchNode]) -> dict[RecordName, R
             errs.append(f"{node.name} (id={node.id}): {error}")
             continue
 
-        records[node.name] = _record_with_cache(str(node.id), cache)
+        record = Record(str(node.id))
+        object.__setattr__(record, "_cache", cache)
+
+        records[node.name] = record
 
     if errs:
         raise ValueError("Failed to load values for records:\n" + "\n".join(errs))
