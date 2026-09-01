@@ -145,7 +145,7 @@ def _collect_file_node_ids(records: Iterable[Record]) -> list[str]:
     return list(node_ids)
 
 
-def _prime_file_paths(records: Iterable[Record], *, chunk_size: int = 1000) -> None:
+def _preload_file_paths(records: Iterable[Record], *, chunk_size: int = 1000) -> None:
     """Resolve every file/dir node path in `records`' values and rewrite the cells in place."""
     records = list(records)
     node_ids = _collect_file_node_ids(records)

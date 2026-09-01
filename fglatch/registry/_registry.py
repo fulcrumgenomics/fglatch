@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
 
-from fglatch.ldata._node_paths import _prime_file_paths
+from fglatch.ldata._node_paths import _preload_file_paths
 from fglatch.type_aliases import RecordName
 
 
@@ -397,7 +397,7 @@ def list_table_records(
     table_id: str, *, page_size: int = 100, chunk_size: int = 1000
 ) -> dict[RecordName, Record]:
     """
-    Fetch every record in a table with linked-record names and file/dir paths primed.
+    Fetch every record in a table with linked-record names and file/dir paths preloaded.
 
     Enumerates the table, then resolves and installs onto each record's cache the two remaining
     per-cell round-trip sources, so a downstream `from_record`/serializer makes no network request
@@ -410,7 +410,7 @@ def list_table_records(
         chunk_size: The number of file/dir node ids resolved per node-path query.
 
     Returns:
-        A mapping from record name to a fully-primed `Record`.
+        A mapping from record name to a fully-preloaded `Record`.
 
     Raises:
         ValidationError: If a linked-record-names GQL response cannot be validated.
@@ -433,6 +433,6 @@ def list_table_records(
         raise ValueError(f"Could not list records in table {table_id}:\n{detail}")
 
     _preload_linked_record_names(records)
-    _prime_file_paths(records.values(), chunk_size=chunk_size)
+    _preload_file_paths(records.values(), chunk_size=chunk_size)
 
     return records

@@ -645,8 +645,8 @@ def test_to_record_light_node_leaves_values_lazy() -> None:
     assert record.get_values(load_if_missing=False) is None
 
 
-def test_list_table_records_primes_links_and_files(mocker: MockerFixture) -> None:
-    """Every record comes back name-keyed with linked names and file paths primed, no extra load."""
+def test_list_table_records_preloads_links_and_files(mocker: MockerFixture) -> None:
+    """Every record comes back name-keyed with linked names and file paths preloaded."""
     link = Record("123")
     record = Record("1")
     object.__setattr__(

@@ -10,7 +10,7 @@ from pytest_mock import MockerFixture
 
 from fglatch.ldata._node_paths import _format_node_path
 from fglatch.ldata._node_paths import _OldStylePathKey
-from fglatch.ldata._node_paths import _prime_file_paths
+from fglatch.ldata._node_paths import _preload_file_paths
 from fglatch.ldata._node_paths import _rewrite_node_path
 from fglatch.ldata._node_paths import resolve_node_paths
 from tests.conftest import cache_with_values
@@ -183,7 +183,7 @@ def test_rewrite_node_path(value: Any, node_paths: dict[str, str], expected: Any
         assert result == expected
 
 
-def test_prime_file_paths_rewrites_scalar_and_list_cells(mocker: MockerFixture) -> None:
+def test_preload_file_paths_rewrites_scalar_and_list_cells(mocker: MockerFixture) -> None:
     """File/dir cells (scalar and in a list) are rewritten in place from the resolved paths."""
     record = Record("1")
     object.__setattr__(
@@ -198,7 +198,7 @@ def test_prime_file_paths_rewrites_scalar_and_list_cells(mocker: MockerFixture) 
         return_value={"p0": "mount/b/a.txt", "o0": None, "p1": "mount/b/d", "o1": None},
     )
 
-    _prime_file_paths([record])
+    _preload_file_paths([record])
 
     values = record.get_values(load_if_missing=False)
     assert values is not None
@@ -209,12 +209,12 @@ def test_prime_file_paths_rewrites_scalar_and_list_cells(mocker: MockerFixture) 
     assert listed[0].remote_path == "latch://b.mount/d"
 
 
-def test_prime_file_paths_no_files_makes_no_query(mocker: MockerFixture) -> None:
+def test_preload_file_paths_no_files_makes_no_query(mocker: MockerFixture) -> None:
     """With no file cells, no node-path query is issued."""
     record = Record("1")
     object.__setattr__(record, "_cache", cache_with_values(name="r", values={"n": 3}))
     execute_mock = mocker.patch("fglatch.ldata._node_paths.execute")
 
-    _prime_file_paths([record])
+    _preload_file_paths([record])
 
     execute_mock.assert_not_called()
