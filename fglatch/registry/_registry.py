@@ -91,17 +91,16 @@ class LatchNode(_FrozenModel):
         """
         Build this record's `_Cache` from whatever the node contains.
 
-        Mirrors the transform in `latch.registry.record.Record.load()` so a preloaded record is
-        indistinguishable from one populated by a network `load()`; the SDK's own `to_python_type`
-        and `to_python_literal` are reused, so value conversion cannot drift from the SDK's.
-
+        Mirrors the transform in `latch.registry.record.Record.load()`. A preloaded record built
+        from our query is consistent from one populated by `Record.load()`.
+        
         If the node includes column data (i.e. it was fetched by the values query), its columns and
         converted values are built too; otherwise only the name, table id, and timestamps are set
-        and values remain to be lazily loaded.
+        and values remain to be lazily loaded with `Record.get_values()`.
 
         Returns:
-            A `_Cache` with the record's name, table id, and timestamps, plus its columns and
-            converted values when the node carries them.
+            A `_Cache` with the record's name and table id. Timestamps, columns, and converted
+            values are included if the node carries them.
 
         Raises:
             RuntimeError: If the node has column definitions or data but not both (a malformed
@@ -133,16 +132,10 @@ class LatchNode(_FrozenModel):
         Build a `Record` with this node's data preloaded onto its cache.
 
         Returns:
-            A `Record` whose cache is preloaded, so the corresponding getters do not trigger a
-            network load. Columns and values are preloaded when the node carries them (see
-            `to_cache`).
+            A `Record` with preloaded cache, so the corresponding getters do not trigger a network
+            load. Columns and values are preloaded when the node carries them (see `to_cache`).
         """
         record = Record(str(self.id))
-
-        # `Record` is a frozen dataclass whose `_cache` field is `init=False`, so neither the
-        # constructor nor `dataclasses.replace()` can inject a populated cache. `object.__setattr__`
-        # is the sanctioned way to write a field on a frozen dataclass — it is exactly the mechanism
-        # a frozen dataclass's own `__post_init__` uses.
         object.__setattr__(record, "_cache", self.to_cache())
 
         return record
@@ -188,8 +181,8 @@ class LatchNode(_FrozenModel):
 
             # NB: this mirrors a quirk in `Record.load()` (record.py:200-204): it sets
             # `InvalidValue("")` for a missing required value and then unconditionally overwrites it
-            # with `None`, so every missing value ends up `None`. We reproduce it exactly so a
-            # preloaded record matches a lazily-loaded one rather than silently diverging.
+            # with `None`, so every missing value ends up `None`. This method reproduces that
+            # behavior so our preloaded records match those retrieved by `Record.load()`.
             if not column.upstream_type["allowEmpty"]:
                 values[key] = InvalidValue("")
 
@@ -311,8 +304,7 @@ def query_latch_records_by_name(
 
     response = CatalogSamplesQueryResponse.model_validate(data)
 
-    # Keep only the records in the requested table. Filtering on the table id returned by the query
-    # avoids a per-record network load to resolve each record's table.
+    # Filter to records from the specified table.
     nodes: list[LatchNode] = [
         node for node in response.catalog_samples.nodes if str(node.experiment.id) == table_id
     ]
@@ -330,8 +322,7 @@ def query_latch_records_by_name(
     if errs:
         raise ValueError("Could not find unique records for queried names" + "\n".join(errs))
 
-    # Build each record, preloading its cache from the node. Value conversion can fail per record;
-    # collect those failures and report them together rather than aborting on the first.
+    # Build each record, preloading its cache from the node.
     records: dict[RecordName, Record] = {}
     value_errs: list[str] = []
     for node in nodes:
