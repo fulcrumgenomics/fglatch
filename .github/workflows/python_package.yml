@@ -29,10 +29,14 @@ jobs:
           uv sync --locked
 
       - name: Set up Latch
+        env:
+          FULCRUM_LATCH_WORKSPACE_ID: ${{ secrets.FULCRUM_LATCH_WORKSPACE_ID }}
+          FULCRUM_DEV_LATCH_USER_API_TOKEN: ${{ secrets.FULCRUM_DEV_LATCH_USER_API_TOKEN }}
         run: |
           mkdir -p ~/.latch
-          echo "${{ secrets.FULCRUM_LATCH_WORKSPACE_ID }}" > ~/.latch/workspace
-          echo "${{ secrets.FULCRUM_DEV_LATCH_USER_API_TOKEN }}" > ~/.latch/token
+          printf '{"workspace_id": "%s", "name": "Fulcrum Genomics"}' \
+            "$FULCRUM_LATCH_WORKSPACE_ID" > ~/.latch/workspace
+          printf '%s' "$FULCRUM_DEV_LATCH_USER_API_TOKEN" > ~/.latch/token
 
       - name: Test the library
         run: |
