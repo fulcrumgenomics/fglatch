@@ -1,4 +1,5 @@
 from collections import Counter
+from collections.abc import Iterable
 from typing import Any
 from typing import cast
 
@@ -238,6 +239,61 @@ _RECORDS_QUERY = gql.gql("""
 """Fetch matching records with their column definitions and values in a single request."""
 
 
+_RECORDS_BY_ID_QUERY = gql.gql("""
+    query Query($ids: [BigInt!]) {
+        catalogSamples(filter: {id: {in: $ids}}) {
+            nodes {
+                id
+                name
+                experiment {
+                    id
+                }
+            }
+        }
+    }
+""")
+"""Fetch id, name, and owning table id for a set of records identified by id."""
+
+
+def _preload_linked_record_names(records: Iterable[Record]) -> None:
+    """
+    Preload the names of records linked from `records`' values, in a single query.
+
+    A link-column value is a `Record` with only its id populated. This resolves all linked records
+    at once and preloads each one's name, so reading it makes no per-record network request.
+
+    Args:
+        records: The records whose values may contain linked records.
+    """
+    # A linked id can appear in several cells; `to_python_literal` mints a fresh Record for each, so
+    # every instance of an id is collected and primed (not just the last one seen).
+    linked: dict[str, list[Record]] = {}
+    for record in records:
+        values = record.get_values(load_if_missing=False)
+        if values is None:
+            continue
+
+        for value in values.values():
+            for item in value if isinstance(value, list) else (value,):
+                if isinstance(item, Record):
+                    linked.setdefault(item.id, []).append(item)
+
+    if not linked:
+        return
+
+    data = execute(
+        document=_RECORDS_BY_ID_QUERY,
+        variables={"ids": cast(JsonArray, list(linked))},
+    )
+    response = CatalogSamplesQueryResponse.model_validate(data)
+    for node in response.catalog_samples.nodes:
+        # Instances of one id share a cache: same record, so identical data, and a later lazy load
+        # through any instance repopulates the shared cache for all of them.
+        cache = node.to_cache()
+        for record in linked.get(str(node.id), []):
+            object.__setattr__(record, "_cache", cache)
+
+
 def query_latch_records_by_name(
     record_names: str | list[str],
     /,
@@ -249,7 +305,8 @@ def query_latch_records_by_name(
 
     Records are fetched across all Registry tables and then filtered to `table_id`. Each returned
     record is fully preloaded from the query — its name, table id, columns, and values — so reading
-    them makes no additional per-record network request.
+    them makes no additional per-record network request. Linked-record cells additionally have their
+    names resolved in one further query, so reading a linked record's name needs no network request.
 
     Args:
         record_names: A record name or a list of record names in the Latch Registry.
@@ -310,5 +367,7 @@ def query_latch_records_by_name(
 
     if query_errs or value_errs:
         raise ValueError("Could not query records by name:\n" + "\n".join(query_errs + value_errs))
+
+    _preload_linked_record_names(records.values())
 
     return records

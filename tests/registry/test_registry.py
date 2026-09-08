@@ -11,8 +11,10 @@ from pytest_mock import MockerFixture
 
 from fglatch.registry import LatchRecordModel
 from fglatch.registry import query_latch_records_by_name
+from fglatch.registry._registry import _RECORDS_BY_ID_QUERY
 from fglatch.registry._registry import _RECORDS_QUERY
 from fglatch.registry._registry import LatchNode
+from fglatch.registry._registry import _preload_linked_record_names
 from fglatch.type_aliases import RecordName
 from tests.constants import MOCK_TABLE_1_ID
 
@@ -304,6 +306,165 @@ def test_records_query_excludes_soft_deleted_records() -> None:
     """The by-name query carries the removed-filter clause (a structural guard, not end-to-end)."""
     normalized = "".join(print_ast(_RECORDS_QUERY).split())
     assert "removed:{equalTo:false}" in normalized
+
+
+def test_by_id_query_does_not_filter_removed() -> None:
+    """By-id is keyed on unique ids, so a soft-deleted linked target is still name-primed."""
+    normalized = "".join(print_ast(_RECORDS_BY_ID_QUERY).split())
+    assert "removed" not in normalized
+
+
+def _link_column_def(key: str, *, array: bool = False) -> dict[str, Any]:
+    """A column definition node for a link (or array-of-link) column."""
+    link_type: dict[str, Any] = {"primitive": "link", "experimentId": "555"}
+    registry_type = {"array": link_type} if array else link_type
+    return {"key": key, "type": {"type": registry_type, "allowEmpty": False}, "def": None}
+
+
+def _link_value(sample_id: str) -> dict[str, Any]:
+    """A registry link value pointing at `sample_id`."""
+    return {"value": {"sampleId": sample_id}, "valid": True}
+
+
+def _values_response(
+    record_id: int, name: str, table_id: int, column_defs: list, data: list
+) -> dict:
+    """A single-node values-query response with the given column definitions and data."""
+    return {
+        "catalogSamples": {
+            "nodes": [
+                {
+                    "id": record_id,
+                    "name": name,
+                    "experiment": {
+                        "id": table_id,
+                        "catalogExperimentColumnDefinitionsByExperimentId": {"nodes": column_defs},
+                    },
+                    "catalogSampleColumnDataBySampleId": {"nodes": data},
+                }
+            ]
+        }
+    }
+
+
+def test_query_latch_records_by_name_preloads_linked_record_names(mocker: MockerFixture) -> None:
+    """A linked record's name is preloaded via one id query, so get_name() needs no network."""
+    values_response = _values_response(
+        1, "name_1", 999, [_link_column_def("seq")], [{"key": "seq", "data": _link_value("123")}]
+    )
+    id_response = {
+        "catalogSamples": {"nodes": [{"id": 123, "name": "seq_a", "experiment": {"id": 555}}]}
+    }
+    mocker.patch("fglatch.registry._registry.execute", side_effect=[values_response, id_response])
+
+    records = query_latch_records_by_name("name_1", table_id="999")
+
+    values = records["name_1"].get_values(load_if_missing=False)
+    assert values is not None
+    linked = values["seq"]
+    assert isinstance(linked, Record)
+    assert linked.id == "123"
+    assert linked.get_name(load_if_missing=False) == "seq_a"
+
+
+def test_query_latch_records_by_name_preloads_linked_names_in_array_columns(
+    mocker: MockerFixture,
+) -> None:
+    """Linked records inside an array-link column are preloaded too."""
+    values_response = _values_response(
+        1,
+        "name_1",
+        999,
+        [_link_column_def("seqs", array=True)],
+        [{"key": "seqs", "data": [_link_value("123"), _link_value("124")]}],
+    )
+    id_response = {
+        "catalogSamples": {
+            "nodes": [
+                {"id": 123, "name": "seq_a", "experiment": {"id": 555}},
+                {"id": 124, "name": "seq_b", "experiment": {"id": 555}},
+            ]
+        }
+    }
+    mocker.patch("fglatch.registry._registry.execute", side_effect=[values_response, id_response])
+
+    records = query_latch_records_by_name("name_1", table_id="999")
+
+    values = records["name_1"].get_values(load_if_missing=False)
+    assert values is not None
+    linked_list = values["seqs"]
+    assert isinstance(linked_list, list)
+    names = [r.get_name(load_if_missing=False) for r in linked_list if isinstance(r, Record)]
+    assert names == ["seq_a", "seq_b"]
+
+
+def test_query_latch_records_by_name_skips_id_query_when_no_links(
+    mocker: MockerFixture,
+    fake_values_response: dict[str, Any],
+) -> None:
+    """With no linked records, no second (id) query is issued."""
+    mock_execute = mocker.patch(
+        "fglatch.registry._registry.execute", return_value=fake_values_response
+    )
+
+    query_latch_records_by_name(["name_1", "name_2"], table_id="999")
+
+    assert mock_execute.call_count == 1
+
+
+def test_preload_linked_record_names_ignores_records_without_values(mocker: MockerFixture) -> None:
+    """A record whose values are not loaded is skipped (no query, no error)."""
+    mock_execute = mocker.patch("fglatch.registry._registry.execute")
+    light = LatchNode.model_validate({"id": 1, "name": "r", "experiment": {"id": 999}}).to_record()
+
+    _preload_linked_record_names([light])
+
+    mock_execute.assert_not_called()
+
+
+def test_query_latch_records_by_name_primes_shared_linked_id_across_records(
+    mocker: MockerFixture,
+) -> None:
+    """Two records linking the same id each prime their own instance, not just one."""
+
+    # to_python_literal mints a fresh Record per link cell, so name_1 and name_2 hold distinct
+    # instances of the linked record; both must be primed, or one falls back to a lazy load.
+    def _linked(record_id: int, name: str) -> dict[str, Any]:
+        return {
+            "id": record_id,
+            "name": name,
+            "experiment": {
+                "id": 999,
+                "catalogExperimentColumnDefinitionsByExperimentId": {
+                    "nodes": [_link_column_def("seq")]
+                },
+            },
+            "catalogSampleColumnDataBySampleId": {
+                "nodes": [{"key": "seq", "data": _link_value("123")}]
+            },
+        }
+
+    values_response = {"catalogSamples": {"nodes": [_linked(1, "name_1"), _linked(2, "name_2")]}}
+    id_response = {
+        "catalogSamples": {"nodes": [{"id": 123, "name": "seq_a", "experiment": {"id": 555}}]}
+    }
+    mock_execute = mocker.patch(
+        "fglatch.registry._registry.execute", side_effect=[values_response, id_response]
+    )
+
+    records = query_latch_records_by_name(["name_1", "name_2"], table_id="999")
+
+    links: list[Record] = []
+    for name in ("name_1", "name_2"):
+        values = records[name].get_values(load_if_missing=False)
+        assert values is not None
+        link = values["seq"]
+        assert isinstance(link, Record)
+        assert link.get_name(load_if_missing=False) == "seq_a"  # primed — no lazy load
+        links.append(link)
+
+    assert links[0] is not links[1]  # distinct instances of the same id, each primed
+    assert mock_execute.call_count == 2  # values query + one id query, no lazy fallback
 
 
 class MockRecord(LatchRecordModel):
