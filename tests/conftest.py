@@ -3,10 +3,12 @@ from pathlib import Path
 from typing import Final
 
 import pytest
+from gql.transport.exceptions import TransportError
 from latch.registry.table import Table
+from latch.utils import get_workspaces
 from latch_sdk_config.user import user_config
+from requests.exceptions import RequestException
 
-from fglatch._client.latch_client import LatchClient
 from tests.constants import MOCK_TABLE_1_ID
 
 FULCRUM_WORKSPACE_NAME: Final[str] = "Fulcrum Genomics"
@@ -37,10 +39,11 @@ def _latch_api_is_available() -> bool:
         )
         return False
 
-    # Probe the same REST endpoint the online tests depend on.
+    # Probe Latch connectivity with a lightweight GQL query; catch only transport errors so
+    # unrelated failures are not masked.
     try:
-        LatchClient().get_executions()
-    except Exception:
+        get_workspaces()
+    except (TransportError, RequestException):
         return False
 
     return True
