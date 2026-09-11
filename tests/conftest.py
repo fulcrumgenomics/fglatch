@@ -3,10 +3,11 @@ from pathlib import Path
 from typing import Final
 
 import pytest
-import requests
+from gql.transport.exceptions import TransportError
 from latch.registry.table import Table
-from latch_sdk_config.latch import config
+from latch.utils import get_workspaces
 from latch_sdk_config.user import user_config
+from requests.exceptions import RequestException
 
 from tests.constants import MOCK_TABLE_1_ID
 
@@ -38,16 +39,11 @@ def _latch_api_is_available() -> bool:
         )
         return False
 
+    # Probe Latch connectivity with a lightweight GQL query; catch only transport errors so
+    # unrelated failures are not masked.
     try:
-        resp = requests.post(
-            url=config.api.user.list_workspaces,
-            headers={"Authorization": f"Bearer {user_config.token}"},
-            json={"ws_account_id": user_config.workspace_id},
-        )
-
-        resp.raise_for_status()
-
-    except requests.HTTPError:
+        get_workspaces()
+    except (TransportError, RequestException):
         return False
 
     return True
