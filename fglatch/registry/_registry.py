@@ -1,5 +1,6 @@
 from collections import Counter
 from collections.abc import Iterable
+from collections.abc import Mapping
 from typing import Any
 from typing import cast
 
@@ -14,7 +15,12 @@ from latch.registry.upstream_types.values import DBValue
 from latch.registry.utils import RegistryTransformerException
 from latch.registry.utils import to_python_literal
 from latch.registry.utils import to_python_type
+from latch.types.directory import LatchDir
+from latch.types.file import LatchFile
+from latch.types.utils import is_absolute_node_path
+from latch.types.utils import old_style_path
 from latch_sdk_gql import JsonArray
+from latch_sdk_gql import JsonValue
 from latch_sdk_gql.execute import execute
 from pydantic import BaseModel
 from pydantic import ConfigDict
@@ -294,6 +300,152 @@ def _preload_linked_record_names(records: Iterable[Record]) -> None:
             object.__setattr__(record, "_cache", cache)
 
 
+def _format_node_path(node_raw_path: str | None, owner: str | None) -> str | None:
+    """
+    Format an `(ldataGetPath, ldataOwner)` pair into a readable path, as `format_path` does.
+
+    We format node paths ourselves because `latch`'s `format_path` welds the network fetch to the
+    formatting and exposes no pure helper to import, and there is no upstream path to factor one
+    out. This reproduces the reachable cases of `format_path`'s cascade (the parity test is the
+    drift guard); `_resolve_node_paths` batches the per-id fetch `format_path` does one at a time.
+
+    Returns None when the pair cannot be formatted, so callers omit the id and the cell keeps its
+    raw node path. `format_path` also has `mount_gcp`/`mount_azure` branches, but the unanchored
+    `old_style_path` regex makes its `mount` alternative shadow them, leaving `mount` and
+    `account_root` as the only reachable shapes; the parity test against `format_path` guards this
+    if the SDK's regex ever changes.
+    """
+    if node_raw_path is None:
+        return None
+
+    match = old_style_path.match(node_raw_path)
+    if match is None:
+        return None
+
+    parts = node_raw_path.split("/")
+    key = "/".join(parts[2:])
+
+    if match["mount"] is not None:
+        return f"latch://{parts[1]}.mount/{key}"
+
+    # Not a mount* form, so `match` is account_root (the only other alternative); needs an owner.
+    if owner is None:
+        return None
+
+    return f"latch://{owner}.account/{key}"
+
+
+def _resolve_node_paths(node_ids: Iterable[str], *, chunk_size: int = 1000) -> dict[str, str]:
+    """
+    Resolve `latch://<id>.node` node ids to readable paths, batched.
+
+    Deduplicates the ids, then issues one aliased GraphQL query per `chunk_size` ids (each id
+    contributes an aliased `ldataGetPath` + `ldataOwner`) and applies the same local formatting as
+    `latch.types.utils.format_path`. This replaces one network round-trip per id with one per chunk.
+
+    A node that resolves to null (e.g. a deleted node) is omitted, so callers can fall back to the
+    raw path. A chunk whose query errors does not stop the others: every chunk failure is collected
+    and raised together at the end, so one call surfaces all of them.
+
+    Args:
+        node_ids: The node ids to resolve (the `<id>` in `latch://<id>.node`).
+        chunk_size: The number of ids resolved per GraphQL query.
+
+    Returns:
+        A mapping from node id to readable path, omitting ids that resolve to null.
+
+    Raises:
+        ValueError: If `chunk_size` is less than 1.
+        RuntimeError: If any chunk's query fails; the message aggregates every chunk failure.
+    """
+    if chunk_size < 1:
+        raise ValueError(f"chunk_size must be >= 1, got {chunk_size}")
+
+    unique_ids: list[str] = list(dict.fromkeys(node_ids))
+
+    resolved: dict[str, str] = {}
+    errors: list[str] = []
+    for start in range(0, len(unique_ids), chunk_size):
+        chunk = unique_ids[start : start + chunk_size]
+
+        params = ", ".join(f"$id{i}: BigInt!" for i in range(len(chunk)))
+        aliases = "\n".join(
+            f"  p{i}: ldataGetPath(argNodeId: $id{i})  o{i}: ldataOwner(argNodeId: $id{i})"
+            for i in range(len(chunk))
+        )
+        document = gql.gql(f"query ResolveNodePaths({params}) {{\n{aliases}\n}}")
+        variables: dict[str, JsonValue] = {f"id{i}": node_id for i, node_id in enumerate(chunk)}
+
+        # Collect a chunk's failure and keep going, so all failures surface in one raised error.
+        try:
+            data = execute(document=document, variables=variables)
+        except Exception as error:
+            errors.append(f"{len(chunk)} node id(s) starting at {chunk[0]!r}: {error}")
+            continue
+
+        for i, node_id in enumerate(chunk):
+            path = _format_node_path(data[f"p{i}"], data[f"o{i}"])
+            if path is not None:
+                resolved[node_id] = path
+
+    if errors:
+        raise RuntimeError(
+            f"Failed to resolve node paths for {len(errors)} chunk(s):\n" + "\n".join(errors)
+        )
+
+    return resolved
+
+
+def _rewrite_node_path(value: Any, node_paths: Mapping[str, str]) -> Any:
+    """Rebuild a file/dir node-path cell from `node_paths`; return non-file values unchanged."""
+    if not isinstance(value, (LatchFile, LatchDir)) or value.remote_path is None:
+        return value
+    match = is_absolute_node_path.match(value.remote_path)
+    if match is None:
+        return value
+    path = node_paths.get(match.group("node_id"))
+    if path is None:
+        return value
+    # Registry cells carry only a remote path, so reconstructing from it preserves the whole cell.
+    return type(value)(path)
+
+
+def _collect_file_node_ids(records: Iterable[Record]) -> list[str]:
+    """The distinct file/dir node ids referenced by `records`' file cells, in first-seen order."""
+    node_ids: dict[str, None] = {}  # dict as an ordered set
+    for record in records:
+        values = record.get_values(load_if_missing=False)
+        if values is None:
+            continue
+        for value in values.values():
+            for item in value if isinstance(value, list) else (value,):
+                if isinstance(item, (LatchFile, LatchDir)) and item.remote_path is not None:
+                    # Mirror format_path's gate: it round-trips only on a bare latch://<id>.node.
+                    match = is_absolute_node_path.match(item.remote_path)
+                    if match is not None:
+                        node_ids[match.group("node_id")] = None
+    return list(node_ids)
+
+
+def _preload_file_paths(records: Iterable[Record], *, chunk_size: int = 1000) -> None:
+    """Resolve every file/dir node path in `records`' values and rewrite the cells in place."""
+    records = list(records)
+    node_ids = _collect_file_node_ids(records)
+    if not node_ids:
+        return
+
+    node_paths = _resolve_node_paths(node_ids, chunk_size=chunk_size)
+    for record in records:
+        values = record.get_values(load_if_missing=False)
+        if values is None:
+            continue
+        for key, value in values.items():
+            if isinstance(value, list):
+                values[key] = [_rewrite_node_path(item, node_paths) for item in value]
+            else:
+                values[key] = _rewrite_node_path(value, node_paths)
+
+
 def query_latch_records_by_name(
     record_names: str | list[str],
     /,
@@ -305,8 +457,9 @@ def query_latch_records_by_name(
 
     Records are fetched across all Registry tables and then filtered to `table_id`. Each returned
     record is fully preloaded from the query — its name, table id, columns, and values — so reading
-    them makes no additional per-record network request. Linked-record cells additionally have their
-    names resolved in one further query, so reading a linked record's name needs no network request.
+    them makes no additional per-record network request. Linked-record names and file/dir readable
+    paths are additionally resolved in batched follow-up queries, so a downstream serializer makes
+    no per-cell network request.
 
     Args:
         record_names: A record name or a list of record names in the Latch Registry.
@@ -323,6 +476,7 @@ def query_latch_records_by_name(
         ValueError: If one or more records' values cannot be converted to their Python types.
         RuntimeError: If a record's values response is malformed (missing column definitions or
             data). Not expected in practice: the by-name query always fetches both.
+        RuntimeError: If a file/dir node-path query fails while resolving readable paths.
     """
     if isinstance(record_names, str):
         record_names = [record_names]
@@ -369,5 +523,6 @@ def query_latch_records_by_name(
         raise ValueError("Could not query records by name:\n" + "\n".join(query_errs + value_errs))
 
     _preload_linked_record_names(records.values())
+    _preload_file_paths(records.values())
 
     return records
