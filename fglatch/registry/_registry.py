@@ -300,13 +300,14 @@ def _preload_linked_record_names(records: Iterable[Record]) -> None:
             object.__setattr__(record, "_cache", cache)
 
 
-# We format node paths ourselves because `latch`'s `format_path` welds the network fetch to the
-# formatting and exposes no pure helper to import, and there is no upstream path to factor one out.
-# `_format_node_path` reproduces the reachable cases of `format_path`'s cascade (the parity test is
-# the drift guard); `_resolve_node_paths` batches the per-id fetch `format_path` does one at a time.
-def _format_node_path(raw: str | None, owner: str | None) -> str | None:
+def _format_node_path(node_raw_path: str | None, owner: str | None) -> str | None:
     """
     Format an `(ldataGetPath, ldataOwner)` pair into a readable path, as `format_path` does.
+
+    We format node paths ourselves because `latch`'s `format_path` welds the network fetch to the
+    formatting and exposes no pure helper to import, and there is no upstream path to factor one
+    out. This reproduces the reachable cases of `format_path`'s cascade (the parity test is the
+    drift guard); `_resolve_node_paths` batches the per-id fetch `format_path` does one at a time.
 
     Returns None when the pair cannot be formatted, so callers omit the id and the cell keeps its
     raw node path. `format_path` also has `mount_gcp`/`mount_azure` branches, but the unanchored
@@ -314,14 +315,14 @@ def _format_node_path(raw: str | None, owner: str | None) -> str | None:
     `account_root` as the only reachable shapes; the parity test against `format_path` guards this
     if the SDK's regex ever changes.
     """
-    if raw is None:
+    if node_raw_path is None:
         return None
 
-    match = old_style_path.match(raw)
+    match = old_style_path.match(node_raw_path)
     if match is None:
         return None
 
-    parts = raw.split("/")
+    parts = node_raw_path.split("/")
     key = "/".join(parts[2:])
 
     if match["mount"] is not None:
