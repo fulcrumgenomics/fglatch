@@ -327,8 +327,12 @@ def _link_value(sample_id: str) -> dict[str, Any]:
 
 
 def _values_response(
-    record_id: int, name: str, table_id: int, column_defs: list, data: list
-) -> dict:
+    record_id: int,
+    name: str,
+    table_id: int,
+    column_defs: list[dict[str, Any]],
+    data: list[dict[str, Any]],
+) -> dict[str, Any]:
     """A single-node values-query response with the given column definitions and data."""
     return {
         "catalogSamples": {
@@ -396,6 +400,34 @@ def test_query_latch_records_by_name_preloads_linked_names_in_array_columns(
     assert isinstance(linked_list, list)
     names = [r.get_name(load_if_missing=False) for r in linked_list if isinstance(r, Record)]
     assert names == ["seq_a", "seq_b"]
+
+
+def test_query_latch_records_by_name_primes_returned_ids_when_id_query_omits_one(
+    mocker: MockerFixture,
+) -> None:
+    """A returned id is primed; an id the id-query omits falls back to a lazy per-record load."""
+    values_response = _values_response(
+        1,
+        "name_1",
+        999,
+        [_link_column_def("seqs", array=True)],
+        [{"key": "seqs", "data": [_link_value("123"), _link_value("124")]}],
+    )
+    # The id query returns 123 but omits 124 (e.g. concurrently removed).
+    id_response = {
+        "catalogSamples": {"nodes": [{"id": 123, "name": "seq_a", "experiment": {"id": 555}}]}
+    }
+    mocker.patch("fglatch.registry._registry.execute", side_effect=[values_response, id_response])
+
+    records = query_latch_records_by_name("name_1", table_id="999")
+
+    values = records["name_1"].get_values(load_if_missing=False)
+    assert values is not None
+    linked = values["seqs"]
+    assert isinstance(linked, list)
+    by_id = {record.id: record for record in linked if isinstance(record, Record)}
+    assert by_id["123"].get_name(load_if_missing=False) == "seq_a"  # primed from the id query
+    assert by_id["124"].get_name(load_if_missing=False) is None  # unprimed → lazy fallback
 
 
 def test_query_latch_records_by_name_skips_id_query_when_no_links(
