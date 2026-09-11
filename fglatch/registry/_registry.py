@@ -8,7 +8,6 @@ from latch.registry.record import NoSuchColumnError
 from latch.registry.record import Record
 from latch.registry.record import _Cache
 from latch.registry.types import Column
-from latch.registry.types import InvalidValue
 from latch.registry.types import RecordValue
 from latch.registry.upstream_types.values import DBValue
 from latch.registry.utils import RegistryTransformerException
@@ -92,7 +91,7 @@ class LatchNode(_FrozenModel):
         Build this record's `_Cache` from whatever the node contains.
 
         Mirrors the transform in `latch.registry.record.Record.load()`. A preloaded record built
-        from our query is consistent from one populated by `Record.load()`.
+        from our query is consistent with one populated by `Record.load()`.
 
         If the node includes column data (i.e. it was fetched by the values query), its columns and
         converted values are built too; otherwise only the name, table id, and timestamps are set
@@ -175,17 +174,13 @@ class LatchNode(_FrozenModel):
 
             values[key] = to_python_literal(db_value, column.upstream_type["type"])
 
-        for key, column in columns.items():
+        for key in columns:
             if key in values:
                 continue
 
-            # NB: this mirrors a quirk in `Record.load()` (record.py:200-204): it sets
-            # `InvalidValue("")` for a missing required value and then unconditionally overwrites it
-            # with `None`, so every missing value ends up `None`. This method reproduces that
-            # behavior so our preloaded records match those retrieved by `Record.load()`.
-            if not column.upstream_type["allowEmpty"]:
-                values[key] = InvalidValue("")
-
+            # A column with no datum resolves to `None`, matching `Record.load()`: it sets
+            # `InvalidValue("")` for a missing required value, then unconditionally overwrites it
+            # with `None` (record.py:200-204), so every missing value ends up `None`.
             values[key] = None
 
         return columns, values
@@ -269,6 +264,8 @@ def query_latch_records_by_name(
             tables. Requiring a `table_id` is intended to avoid this, and this error is not
             expected to be raised in practice.)
         ValueError: If one or more records' values cannot be converted to their Python types.
+        RuntimeError: If a record's values response is malformed (missing column definitions or
+            data). Not expected in practice: the by-name query always fetches both.
     """
     if isinstance(record_names, str):
         record_names = [record_names]
