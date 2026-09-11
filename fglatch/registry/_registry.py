@@ -541,8 +541,8 @@ def fetch_table_records(table_id: str, *, page_size: int = 100) -> Iterator[Reco
     its raw `latch://<id>.node` path.
 
     Records are yielded lazily, so the whole table is never held in memory at once, and enrichment
-    is batched per page (one linked-name query and one node-path query per page). To cap a preview
-    without enumerating the whole table, wrap the call with
+    is batched per page: one linked-name query per page and node-path queries batched by chunk. To
+    cap a preview without enumerating the whole table, wrap the call with
     `itertools.islice(fetch_table_records(table_id), n)`.
 
     Args:
@@ -553,9 +553,18 @@ def fetch_table_records(table_id: str, *, page_size: int = 100) -> Iterator[Reco
         Each table record as a fully-preloaded `Record`.
 
     Raises:
+        ValueError: If `page_size` is less than 1.
         ValidationError: If a linked-record-names query response cannot be validated.
         RuntimeError: If a file/dir node-path query fails while resolving readable paths.
     """
+    if page_size < 1:
+        raise ValueError(f"page_size must be >= 1, got {page_size}")
+
+    return _stream_table_records(table_id, page_size=page_size)
+
+
+def _stream_table_records(table_id: str, *, page_size: int) -> Iterator[Record]:
+    """Stream and enrich the table's records page by page (see `fetch_table_records`)."""
     for page in Table(id=table_id).list_records(page_size=page_size):
         records = list(page.values())
         _preload_linked_record_names(records)

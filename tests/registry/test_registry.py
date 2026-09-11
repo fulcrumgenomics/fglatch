@@ -1049,3 +1049,20 @@ def test_fetch_table_records_streams_lazily(mocker: MockerFixture) -> None:
 
     assert [record.get_name(load_if_missing=False) for record in prefix] == ["r1", "r2"]
     assert pages_pulled == 2  # the third page was never pulled
+
+
+def test_fetch_table_records_forwards_page_size(mocker: MockerFixture) -> None:
+    """page_size is threaded through to Table.list_records."""
+    list_records = mocker.patch(
+        "fglatch.registry._registry.Table.list_records", return_value=iter([])
+    )
+
+    list(fetch_table_records("999", page_size=25))
+
+    list_records.assert_called_once_with(page_size=25)
+
+
+def test_fetch_table_records_rejects_nonpositive_page_size() -> None:
+    """A page_size below 1 is rejected eagerly, before any records are fetched."""
+    with pytest.raises(ValueError, match="page_size must be >= 1"):
+        fetch_table_records("999", page_size=0)
