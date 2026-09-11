@@ -1,4 +1,6 @@
+from collections.abc import Iterator
 from datetime import datetime
+from itertools import islice
 from typing import Any
 
 import pytest
@@ -15,6 +17,7 @@ from pydantic import ValidationError
 from pytest_mock import MockerFixture
 
 from fglatch.registry import LatchRecordModel
+from fglatch.registry import fetch_table_records
 from fglatch.registry import query_latch_records_by_name
 from fglatch.registry._registry import _RECORDS_BY_ID_QUERY
 from fglatch.registry._registry import _RECORDS_QUERY
@@ -968,3 +971,98 @@ def test_preload_file_paths_skips_records_without_values(mocker: MockerFixture) 
     assert isinstance(values["f"], LatchFile)
     assert values["f"].remote_path == "latch://b.mount/a.txt"
     assert without_values.get_values(load_if_missing=False) is None
+
+
+def _named_record(record_id: str, name: str) -> Record:
+    """A `Record` with `name` primed and empty values (so preload issues no query)."""
+    record = Record(record_id)
+    object.__setattr__(record, "_cache", cache_with_values(name=name, values={}))
+    return record
+
+
+def test_fetch_table_records_preloads_links_and_files(mocker: MockerFixture) -> None:
+    """Every yielded record has its linked names and file/dir paths preloaded."""
+    record = Record("1")
+    object.__setattr__(
+        record,
+        "_cache",
+        cache_with_values(
+            name="r", values={"seq": Record("123"), "f": LatchFile("latch://9.node")}
+        ),
+    )
+    mocker.patch(
+        "fglatch.registry._registry.Table.list_records", return_value=iter([{"1": record}])
+    )
+    # Both preloads route through the same execute: linked-name query, then node-path query.
+    mocker.patch(
+        "fglatch.registry._registry.execute",
+        side_effect=[
+            {"catalogSamples": {"nodes": [{"id": 123, "name": "seq_a", "experiment": {"id": 5}}]}},
+            {"p0": "mount/b/a.txt", "o0": None},
+        ],
+    )
+
+    records = list(fetch_table_records("999"))
+
+    assert len(records) == 1
+    values = records[0].get_values(load_if_missing=False)
+    assert values is not None
+    seq, file_cell = values["seq"], values["f"]
+    assert isinstance(seq, Record)
+    assert isinstance(file_cell, LatchFile)
+    assert seq.get_name(load_if_missing=False) == "seq_a"
+    assert file_cell.remote_path == "latch://b.mount/a.txt"
+
+
+def test_fetch_table_records_yields_from_every_page(mocker: MockerFixture) -> None:
+    """Records from every page are yielded, in order."""
+    mocker.patch(
+        "fglatch.registry._registry.Table.list_records",
+        return_value=iter([{"1": _named_record("1", "r1")}, {"2": _named_record("2", "r2")}]),
+    )
+
+    names = [record.get_name(load_if_missing=False) for record in fetch_table_records("999")]
+
+    assert names == ["r1", "r2"]
+
+
+def test_fetch_table_records_empty_table_yields_nothing(mocker: MockerFixture) -> None:
+    """A table with no records yields nothing."""
+    mocker.patch("fglatch.registry._registry.Table.list_records", return_value=iter([]))
+
+    assert list(fetch_table_records("999")) == []
+
+
+def test_fetch_table_records_streams_lazily(mocker: MockerFixture) -> None:
+    """Records are yielded lazily, so taking a prefix does not force every page to be built."""
+    pages_pulled = 0
+
+    def pages() -> Iterator[dict[str, Record]]:
+        nonlocal pages_pulled
+        for name in ("r1", "r2", "r3"):
+            pages_pulled += 1
+            yield {name: _named_record(name, name)}
+
+    mocker.patch("fglatch.registry._registry.Table.list_records", return_value=pages())
+
+    prefix = list(islice(fetch_table_records("999"), 2))
+
+    assert [record.get_name(load_if_missing=False) for record in prefix] == ["r1", "r2"]
+    assert pages_pulled == 2  # the third page was never pulled
+
+
+def test_fetch_table_records_forwards_page_size(mocker: MockerFixture) -> None:
+    """page_size is threaded through to Table.list_records."""
+    list_records = mocker.patch(
+        "fglatch.registry._registry.Table.list_records", return_value=iter([])
+    )
+
+    list(fetch_table_records("999", page_size=25))
+
+    list_records.assert_called_once_with(page_size=25)
+
+
+def test_fetch_table_records_rejects_nonpositive_page_size() -> None:
+    """A page_size below 1 is rejected eagerly, before any records are fetched."""
+    with pytest.raises(ValueError, match="page_size must be >= 1"):
+        fetch_table_records("999", page_size=0)

@@ -1,5 +1,6 @@
 from collections import Counter
 from collections.abc import Iterable
+from collections.abc import Iterator
 from collections.abc import Mapping
 from typing import Any
 from typing import cast
@@ -9,6 +10,7 @@ from dateutil.parser import isoparse
 from latch.registry.record import NoSuchColumnError
 from latch.registry.record import Record
 from latch.registry.record import _Cache
+from latch.registry.table import Table
 from latch.registry.types import Column
 from latch.registry.types import RecordValue
 from latch.registry.upstream_types.values import DBValue
@@ -526,3 +528,45 @@ def query_latch_records_by_name(
     _preload_file_paths(records.values())
 
     return records
+
+
+def fetch_table_records(table_id: str, *, page_size: int = 100) -> Iterator[Record]:
+    """
+    Stream every record in a table, each with linked names and file/dir paths preloaded.
+
+    Enumerates the table one page at a time; for each page, resolves the two remaining per-cell
+    round-trip sources — linked-record names and file/dir readable paths — and installs them onto
+    the records' caches before yielding them, so a downstream `from_record`/serializer makes no
+    per-cell network request for resolvable cells. A file cell whose node cannot be resolved keeps
+    its raw `latch://<id>.node` path.
+
+    Records are yielded lazily, so the whole table is never held in memory at once, and enrichment
+    is batched per page: one linked-name query per page and node-path queries batched by chunk. To
+    cap a preview without enumerating the whole table, wrap the call with
+    `itertools.islice(fetch_table_records(table_id), n)`.
+
+    Args:
+        table_id: The ID of the table to stream records from.
+        page_size: The number of records fetched and enriched together per page.
+
+    Yields:
+        Each table record as a fully-preloaded `Record`.
+
+    Raises:
+        ValueError: If `page_size` is less than 1.
+        ValidationError: If a linked-record-names query response cannot be validated.
+        RuntimeError: If a file/dir node-path query fails while resolving readable paths.
+    """
+    if page_size < 1:
+        raise ValueError(f"page_size must be >= 1, got {page_size}")
+
+    return _stream_table_records(table_id, page_size=page_size)
+
+
+def _stream_table_records(table_id: str, *, page_size: int) -> Iterator[Record]:
+    """Stream and enrich the table's records page by page (see `fetch_table_records`)."""
+    for page in Table(id=table_id).list_records(page_size=page_size):
+        records = list(page.values())
+        _preload_linked_record_names(records)
+        _preload_file_paths(records)
+        yield from records
