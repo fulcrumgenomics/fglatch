@@ -3,6 +3,7 @@ from collections.abc import Iterable
 from collections.abc import Iterator
 from collections.abc import Mapping
 from typing import Any
+from typing import Final
 from typing import cast
 
 import gql
@@ -29,6 +30,9 @@ from pydantic import ConfigDict
 from pydantic import Field
 
 from fglatch.type_aliases import RecordName
+
+MAX_QUERY_SIZE: Final[int] = 100
+"""GraphQL operations may select at most 100 top-level fields."""
 
 
 class _FrozenModel(BaseModel):
@@ -337,7 +341,9 @@ def _format_node_path(node_raw_path: str | None, owner: str | None) -> str | Non
     return f"latch://{owner}.account/{key}"
 
 
-def _resolve_node_paths(node_ids: Iterable[str], *, chunk_size: int = 1000) -> dict[str, str]:
+def _resolve_node_paths(
+    node_ids: Iterable[str], *, chunk_size: int = MAX_QUERY_SIZE
+) -> dict[str, str]:
     """
     Resolve `latch://<id>.node` node ids to readable paths, batched.
 
@@ -360,8 +366,8 @@ def _resolve_node_paths(node_ids: Iterable[str], *, chunk_size: int = 1000) -> d
         ValueError: If `chunk_size` is less than 1.
         RuntimeError: If any chunk's query fails; the message aggregates every chunk failure.
     """
-    if chunk_size < 1:
-        raise ValueError(f"chunk_size must be >= 1, got {chunk_size}")
+    if chunk_size < 1 or chunk_size > MAX_QUERY_SIZE:
+        raise ValueError(f"chunk_size must be between 1 and {MAX_QUERY_SIZE}, got {chunk_size}")
 
     unique_ids: list[str] = list(dict.fromkeys(node_ids))
 
@@ -429,7 +435,7 @@ def _collect_file_node_ids(records: Iterable[Record]) -> list[str]:
     return list(node_ids)
 
 
-def _preload_file_paths(records: Iterable[Record], *, chunk_size: int = 100) -> None:
+def _preload_file_paths(records: Iterable[Record], *, chunk_size: int = MAX_QUERY_SIZE) -> None:
     """Resolve every file/dir node path in `records`' values and rewrite the cells in place."""
     records = list(records)
     node_ids = _collect_file_node_ids(records)
