@@ -944,8 +944,14 @@ def test_preload_file_paths_no_files_makes_no_query(mocker: MockerFixture) -> No
 
 def test_resolve_node_paths_rejects_nonpositive_chunk_size() -> None:
     """A chunk_size below 1 is rejected before any query is issued."""
-    with pytest.raises(ValueError, match="chunk_size must be >= 1"):
+    with pytest.raises(ValueError, match="chunk_size must be between 1 and 50"):
         _resolve_node_paths(["1"], chunk_size=0)
+
+
+def test_resolve_node_paths_rejects_over_maximum_chunk_size() -> None:
+    """A chunk_size over the max is rejected before any query is issued."""
+    with pytest.raises(ValueError, match="chunk_size must be between 1 and 50"):
+        _resolve_node_paths(["1"], chunk_size=51)
 
 
 def test_preload_file_paths_skips_records_without_values(mocker: MockerFixture) -> None:
