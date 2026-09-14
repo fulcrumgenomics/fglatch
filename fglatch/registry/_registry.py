@@ -31,8 +31,9 @@ from pydantic import Field
 
 from fglatch.type_aliases import RecordName
 
-MAX_QUERY_SIZE: Final[int] = 100
-"""GraphQL operations may select at most 100 top-level fields."""
+MAX_QUERY_SIZE: Final[int] = 50
+"""Maximum ids per node-path query. Each id selects two top-level fields (`ldataGetPath` +
+`ldataOwner`) and GraphQL operations may select at most 100 top-level fields, so at most 50 ids."""
 
 
 class _FrozenModel(BaseModel):
